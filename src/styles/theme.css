@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-display: "Fraunces", "Georgia", serif;
+
+  --color-surface: #f7f2e9;
+  --color-surface-raised: #fffdf8;
+  --color-surface-muted: #ebe4d6;
+  --color-ink: #1c1a16;
+  --color-ink-muted: #5c564c;
+  --color-accent: #b83a26;
+  --color-accent-soft: color-mix(in srgb, #b83a26 14%, transparent);
+  --color-border: #d9d0bf;
+  --color-success: #2f6b4f;
+  --color-warn: #9a6b1f;
+  --color-danger: #b83a26;
+  --color-canvas-bg: #e8e0d0;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.4rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: #141412;
+    --color-surface-raised: #1c1b18;
+    --color-surface-muted: #24231f;
+    --color-ink: #f2ece2;
+    --color-ink-muted: #a8a094;
+    --color-accent: #e05a47;
+    --color-accent-soft: color-mix(in srgb, #e05a47 18%, transparent);
+    --color-border: #33312b;
+    --color-success: #6fbf96;
+    --color-warn: #d4a24a;
+    --color-danger: #e05a47;
+    --color-canvas-bg: #0e0e0c;
+  }
+}
+
+:root {
+  color-scheme: light dark;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: var(--color-surface);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-surface);
+}
+
+button {
+  font: inherit;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+}
