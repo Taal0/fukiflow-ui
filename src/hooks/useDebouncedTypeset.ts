@@ -3,7 +3,13 @@ import { ApiError } from '@/api/client'
 import { useTypesetMutation } from '@/api/queries'
 import type { PageDetail } from '@/api/types'
 import { buildTypesetBody } from '@/lib/workingDoc'
-import { useSession } from '@/store/session'
+import {
+  bubbleFontsFromEdit,
+  pageFontFromEdit,
+  sizeOverridesFromEdit,
+  textOverridesFromEdit,
+  useSession,
+} from '@/store/session'
 
 const DEBOUNCE_MS = 350
 
@@ -12,7 +18,6 @@ export function useDebouncedTypeset(detail: PageDetail | undefined) {
   const pageSession = useSession((s) =>
     pageId != null ? s.pages[pageId] : undefined,
   )
-  const fontOverride = useSession((s) => s.fontOverride)
   const applyTypeset = useSession((s) => s.applyTypeset)
   const clearTypeset = useSession((s) => s.clearTypeset)
   const mutation = useTypesetMutation()
@@ -20,10 +25,11 @@ export function useDebouncedTypeset(detail: PageDetail | undefined) {
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
 
-  const textKey = JSON.stringify(pageSession?.textOverrides ?? {})
-  const sizeKey = JSON.stringify(pageSession?.sizeOverrides ?? {})
-  const bubbleFontKey = JSON.stringify(pageSession?.bubbleFontOverrides ?? {})
-  const pageFontKey = fontOverride ?? ''
+  const edit = pageSession?.edit
+  const textKey = JSON.stringify(textOverridesFromEdit(edit))
+  const sizeKey = JSON.stringify(sizeOverridesFromEdit(edit))
+  const bubbleFontKey = JSON.stringify(bubbleFontsFromEdit(edit))
+  const pageFontKey = pageFontFromEdit(edit) ?? ''
 
   const fingerprint =
     pageId != null
@@ -68,7 +74,6 @@ export function useDebouncedTypeset(detail: PageDetail | undefined) {
       const body = buildTypesetBody(
         detail,
         useSession.getState().pages[pageId],
-        useSession.getState().fontOverride,
       )
 
       mutation

@@ -103,6 +103,11 @@ export function PageGallery({
                     <span className="absolute left-1 top-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
                       {page.page_no}
                     </span>
+                    {page.bubble_count > 0 && (
+                      <span className="absolute bottom-1 right-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white">
+                        {page.done_count ?? 0}/{page.bubble_count}
+                      </span>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-1">
                     <Badge variant={clean.variant}>clean: {clean.text}</Badge>

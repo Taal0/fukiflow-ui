@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ApiError, api, triggerDownload } from '@/api/client'
-import type { FontInfo, PageDetail, PageSummary } from '@/api/types'
+import type { FontInfo, PageDetail, PageSummary, SaveStatus } from '@/api/types'
 import { FontSelect } from '@/components/FontSelect'
 import { ViewToggle } from '@/components/ViewToggle'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,7 @@ import {
   buildWorkingDoc,
   disabledOffList,
 } from '@/lib/workingDoc'
-import { useSession } from '@/store/session'
+import { pageFontFromEdit, useSession } from '@/store/session'
 
 interface ToolbarProps {
   pageLabel?: string
@@ -18,6 +18,10 @@ interface ToolbarProps {
   chapterSlug: string | null
   typesetPending?: boolean
   typesetError?: string | null
+  saveStatus?: SaveStatus
+  saveError?: string | null
+  dirty?: boolean
+  onResetPage?: () => void
 }
 
 export function Toolbar({
@@ -28,14 +32,19 @@ export function Toolbar({
   chapterSlug,
   typesetPending,
   typesetError,
+  saveStatus,
+  saveError,
+  dirty,
+  onResetPage,
 }: ToolbarProps) {
   const viewMode = useSession((s) => s.viewMode)
   const setViewMode = useSession((s) => s.setViewMode)
-  const fontOverride = useSession((s) => s.fontOverride)
-  const setFontOverride = useSession((s) => s.setFontOverride)
-  const resetPage = useSession((s) => s.resetPage)
+  const setPageFont = useSession((s) => s.setPageFont)
   const resetAll = useSession((s) => s.resetAll)
   const sessionPages = useSession((s) => s.pages)
+  const pageId = detail?.page.id
+  const fontOverride =
+    pageId != null ? pageFontFromEdit(sessionPages[pageId]?.edit) : null
 
   const [busy, setBusy] = useState<'page' | 'chapter' | null>(null)
   const [progress, setProgress] = useState<string | null>(null)
@@ -54,7 +63,7 @@ export function Toolbar({
         {
           doc,
           off: disabledOffList(session),
-          font: fontOverride,
+          font: pageFontFromEdit(session?.edit),
         },
         { download: true },
       )
@@ -74,7 +83,6 @@ export function Toolbar({
     setDlError(null)
     setProgress(`0 / ${pages.length}`)
     try {
-      // Prefetch working docs for all pages (use cache when available).
       const payloads = []
       for (let i = 0; i < pages.length; i++) {
         const p = pages[i]!
@@ -86,7 +94,7 @@ export function Toolbar({
           page_id: p.id,
           doc: buildWorkingDoc(pageDetail.doc, session),
           off: disabledOffList(session),
-          font: fontOverride,
+          font: pageFontFromEdit(session?.edit),
         })
       }
       setProgress('Zip paketleniyor…')
@@ -100,6 +108,17 @@ export function Toolbar({
       setBusy(null)
     }
   }
+
+  const saveLabel =
+    saveStatus === 'saving'
+      ? 'Kaydediliyor…'
+      : saveStatus === 'error'
+        ? 'Kayıt hatası'
+        : saveStatus === 'saved' && !dirty
+          ? 'Kaydedildi'
+          : dirty
+            ? 'Kaydedilmedi'
+            : null
 
   return (
     <header className="relative flex h-12 shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4">
@@ -120,13 +139,28 @@ export function Toolbar({
             Dizgi…
           </span>
         )}
+        {saveLabel && (
+          <span
+            className={
+              saveStatus === 'error'
+                ? 'text-[11px] text-[var(--color-danger)]'
+                : 'text-[11px] text-[var(--color-ink-muted)]'
+            }
+            title={saveError ?? undefined}
+          >
+            {saveLabel}
+          </span>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2">
         <FontSelect
           fonts={fonts}
           value={fontOverride}
-          onChange={setFontOverride}
+          onChange={(key) => {
+            if (pageId == null) return
+            setPageFont(pageId, key)
+          }}
           allowEmpty
           emptyLabel="Varsayılan font"
           title="Sayfa geneli font"
@@ -156,7 +190,7 @@ export function Toolbar({
           variant="ghost"
           size="sm"
           disabled={!detail}
-          onClick={() => detail && resetPage(detail.page.id)}
+          onClick={() => onResetPage?.()}
           title="Bu sayfayı seed haline döndür"
         >
           Sayfa sıfırla
@@ -172,11 +206,11 @@ export function Toolbar({
         </Button>
       </div>
 
-      {(progress || dlError || typesetError) && (
+      {(progress || dlError || typesetError || saveError) && (
         <div className="absolute left-1/2 top-full z-20 mt-1 -translate-x-1/2 rounded-md bg-[var(--color-surface-raised)] px-3 py-1.5 text-xs shadow-sm ring-1 ring-[var(--color-border)]">
-          {dlError || typesetError ? (
+          {dlError || typesetError || saveError ? (
             <span className="text-[var(--color-danger)]">
-              {dlError || typesetError}
+              {dlError || typesetError || saveError}
             </span>
           ) : (
             <span className="text-[var(--color-ink-muted)]">{progress}</span>

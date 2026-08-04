@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type {
   Bubble,
+  BubbleEdit,
   BubbleLayout,
   BubbleText,
   FontInfo,
@@ -27,14 +28,18 @@ interface BubbleListProps {
   textOverrides: Record<number, string>
   bubbleFontOverrides: Record<number, string>
   sizeOverrides: Record<number, number>
+  bubbleEdits: Record<string, BubbleEdit>
   fonts: FontInfo[]
   typesetPending?: boolean
+  hideDone?: boolean
+  onHideDoneChange?: (hide: boolean) => void
   onSelect: (bubbleId: number) => void
   onToggleLayer: (layerId: string, enabled: boolean) => void
   onTextChange: (bubbleId: number, text: string) => void
   onResetText: (bubbleId: number) => void
   onBubbleFont: (bubbleId: number, fontKey: string | null) => void
   onSizeChange: (bubbleId: number, scale: number | null) => void
+  onToggleDone: (bubbleId: number, done: boolean) => void
 }
 
 function seedText(bubbleId: number, texts: BubbleText[]): string {
@@ -76,14 +81,18 @@ export function BubbleList({
   textOverrides,
   bubbleFontOverrides,
   sizeOverrides,
+  bubbleEdits,
   fonts,
   typesetPending,
+  hideDone,
+  onHideDoneChange,
   onSelect,
   onToggleLayer,
   onTextChange,
   onResetText,
   onBubbleFont,
   onSizeChange,
+  onToggleDone,
 }: BubbleListProps) {
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -92,6 +101,14 @@ export function BubbleList({
     const rb = b.reading_order ?? b.id
     return ra - rb
   })
+
+  const doneCount = bubbles.filter(
+    (b) => bubbleEdits[String(b.id)]?.done,
+  ).length
+
+  const visible = hideDone
+    ? bubbles.filter((b) => !bubbleEdits[String(b.id)]?.done)
+    : bubbles
 
   useEffect(() => {
     const node = listRef.current?.querySelector('[data-selected="true"]')
@@ -106,18 +123,29 @@ export function BubbleList({
             Balonlar
           </h2>
           <p className="text-[11px] text-[var(--color-ink-muted)]">
-            {bubbles.length} balon
+            {doneCount}/{bubbles.length} bitti
           </p>
         </div>
-        {typesetPending && (
-          <span className="text-[11px] text-[var(--color-ink-muted)]">
-            Dizgi…
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {typesetPending && (
+            <span className="text-[11px] text-[var(--color-ink-muted)]">
+              Dizgi…
+            </span>
+          )}
+          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--color-ink-muted)]">
+            <input
+              type="checkbox"
+              checked={Boolean(hideDone)}
+              onChange={(e) => onHideDoneChange?.(e.target.checked)}
+              className="accent-[var(--color-accent)]"
+            />
+            Bitmeyenler
+          </label>
+        </div>
       </div>
       <div ref={listRef} className="flex-1 overflow-y-auto p-2">
         <ul className="flex flex-col gap-1.5">
-          {bubbles.map((bubble) => {
+          {visible.map((bubble) => {
             const order = bubble.reading_order ?? '—'
             const layout =
               layoutsByBubble[bubble.id] ??
@@ -134,6 +162,7 @@ export function BubbleList({
             const selected = bubble.id === selectedBubbleId
             const scale = sizeOverrides[bubble.id] ?? 1
             const pct = Math.round(scale * 100)
+            const done = Boolean(bubbleEdits[String(bubble.id)]?.done)
 
             const clnOn =
               clnLayer != null &&
@@ -153,6 +182,7 @@ export function BubbleList({
                     selected
                       ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
                       : 'border-transparent hover:bg-[var(--color-surface-muted)]',
+                    done && !selected && 'opacity-70',
                   )}
                 >
                   <button
@@ -166,8 +196,11 @@ export function BubbleList({
                         <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-accent)]" />
                       )}
                     </span>
-                    <span className="text-[11px] text-[var(--color-ink-muted)]">
-                      Balon {bubble.id}
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-[var(--color-ink-muted)]">
+                      <span>Balon {bubble.id}</span>
+                      {done && (
+                        <Badge variant="ok">Bitti</Badge>
+                      )}
                     </span>
                   </button>
 
@@ -278,6 +311,16 @@ export function BubbleList({
                       }
                       onCheckedChange={(v) => onToggleLayer(txtId, v)}
                     />
+
+                    <label className="flex cursor-pointer items-center gap-2 text-[11px] text-[var(--color-ink)]">
+                      <input
+                        type="checkbox"
+                        checked={done}
+                        onChange={(e) => onToggleDone(bubble.id, e.target.checked)}
+                        className="accent-[var(--color-accent)]"
+                      />
+                      Bitti
+                    </label>
                   </div>
                 </div>
               </li>

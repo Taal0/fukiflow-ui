@@ -1,10 +1,12 @@
 import type {
   BubbleLayout,
   Chapter,
+  ChapterProgress,
   FontInfo,
   Layer,
   PageDetail,
   PageDoc,
+  PageEdit,
   PageSummary,
 } from './types'
 
@@ -16,6 +18,20 @@ export class ApiError extends Error {
     this.name = 'ApiError'
     this.status = status
   }
+}
+
+function errorDetail(body: unknown, fallback: string): string {
+  if (!body || typeof body !== 'object') return fallback
+  const b = body as {
+    detail?: string | { message?: string }
+    message?: string
+  }
+  if (typeof b.detail === 'string') return b.detail
+  if (b.detail && typeof b.detail === 'object' && b.detail.message) {
+    return b.detail.message
+  }
+  if (typeof b.message === 'string') return b.message
+  return fallback
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -30,8 +46,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let detail = res.statusText
     try {
-      const body = (await res.json()) as { detail?: string; message?: string }
-      detail = body.detail || body.message || detail
+      detail = errorDetail(await res.json(), detail)
     } catch {
       /* ignore */
     }
@@ -146,6 +161,33 @@ export const api = {
       body: JSON.stringify({ pages }),
       signal: init?.signal,
     }),
+
+  getPageEdit: (pageId: number) =>
+    request<{ rev: number; edit: PageEdit }>(
+      `/api/pages/${pageId}/edit`,
+    ),
+
+  putPageEdit: (
+    pageId: number,
+    body: { rev: number; edit: PageEdit },
+    init?: { signal?: AbortSignal },
+  ) =>
+    request<{ rev: number; edit: PageEdit }>(`/api/pages/${pageId}/edit`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: init?.signal,
+    }),
+
+  deletePageEdit: (pageId: number) =>
+    request<{ ok: boolean; deleted: boolean }>(`/api/pages/${pageId}/edit`, {
+      method: 'DELETE',
+    }),
+
+  chapterProgress: (slug: string) =>
+    request<ChapterProgress>(
+      `/api/chapters/${encodeURIComponent(slug)}/progress`,
+    ),
 }
 
 export function triggerDownload(blob: Blob, filename: string): void {

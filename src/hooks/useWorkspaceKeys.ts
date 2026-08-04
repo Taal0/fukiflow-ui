@@ -9,6 +9,12 @@ interface Args {
   pageId: number | null
 }
 
+function orderedBubbles(doc: PageDoc) {
+  return [...doc.bubbles].sort(
+    (a, b) => (a.reading_order ?? a.id) - (b.reading_order ?? b.id),
+  )
+}
+
 /** Global keyboard shortcuts for the letterer workspace. */
 export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const selectPage = useSession((s) => s.selectPage)
@@ -16,6 +22,9 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const selectedPageId = useSession((s) => s.selectedPageId)
   const setViewMode = useSession((s) => s.setViewMode)
   const toggleLayer = useSession((s) => s.toggleLayer)
+  const toggleBubbleDone = useSession((s) => s.toggleBubbleDone)
+  const undo = useSession((s) => s.undo)
+  const redo = useSession((s) => s.redo)
   const pageSession = useSession((s) =>
     pageId != null ? s.pages[pageId] : undefined,
   )
@@ -24,14 +33,28 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const tag = target?.tagName
-      if (
+      const inField =
         tag === 'INPUT' ||
         tag === 'TEXTAREA' ||
         tag === 'SELECT' ||
         target?.isContentEditable
-      ) {
+
+      const mod = e.metaKey || e.ctrlKey
+
+      // Undo / redo — allow even from text fields (standard editor feel).
+      if (mod && pageId != null && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        if (e.shiftKey) redo(pageId)
+        else undo(pageId)
         return
       }
+      if (mod && pageId != null && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault()
+        redo(pageId)
+        return
+      }
+
+      if (inField) return
 
       // Page navigation
       if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'j') {
@@ -67,24 +90,36 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
 
       if (!doc || pageId == null) return
 
-      const bubbles = [...doc.bubbles].sort(
-        (a, b) =>
-          (a.reading_order ?? a.id) - (b.reading_order ?? b.id),
-      )
+      const bubbles = orderedBubbles(doc)
       const selected = pageSession?.selectedBubbleId ?? null
       const idx = bubbles.findIndex((b) => b.id === selected)
 
-      // Bubble navigation
-      if (e.key === 'ArrowRight' || e.key === 'n') {
+      // Bubble navigation — arrows, n/p, and Tab / Shift+Tab in reading order
+      if (
+        e.key === 'ArrowRight' ||
+        e.key === 'n' ||
+        (e.key === 'Tab' && !e.shiftKey)
+      ) {
         e.preventDefault()
         const next = bubbles[Math.min(bubbles.length - 1, Math.max(0, idx) + 1)]
         if (next) selectBubble(next.id)
         return
       }
-      if (e.key === 'ArrowLeft' || e.key === 'p') {
+      if (
+        e.key === 'ArrowLeft' ||
+        e.key === 'p' ||
+        (e.key === 'Tab' && e.shiftKey)
+      ) {
         e.preventDefault()
         const next = bubbles[Math.max(0, (idx < 0 ? 0 : idx) - 1)]
         if (next) selectBubble(next.id)
+        return
+      }
+
+      // Mark selected bubble done
+      if ((e.key === 'd' || e.key === 'D') && selected != null) {
+        e.preventDefault()
+        toggleBubbleDone(pageId, selected)
         return
       }
 
@@ -118,5 +153,8 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     selectBubble,
     setViewMode,
     toggleLayer,
+    toggleBubbleDone,
+    undo,
+    redo,
   ])
 }

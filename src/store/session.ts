@@ -1,37 +1,65 @@
 import { create } from 'zustand'
-import type { BubbleLayout, Layer, ViewMode } from '@/api/types'
+import type {
+  BubbleEdit,
+  BubbleLayout,
+  Layer,
+  PageEdit,
+  SaveStatus,
+  ViewMode,
+} from '@/api/types'
+
+const UNDO_CAP = 50
 
 export interface PageSession {
   selectedBubbleId: number | null
-  disabledLayerIds: Set<string>
-  textOverrides: Record<number, string>
-  bubbleFontOverrides: Record<number, string>
-  sizeOverrides: Record<number, number>
+  /** Working overlay (matches server PageEdit shape). */
+  edit: PageEdit
+  /** True when local edit differs from last hydrated/saved snapshot. */
+  dirty: boolean
+  saveStatus: SaveStatus
+  saveError: string | null
+  /** Ephemeral typeset results — not part of the overlay. */
   layoutsByBubble: Record<number, BubbleLayout>
-  /** Replaces seed text layers after a successful typeset. */
   textLayers: Layer[] | null
+  undoPast: PageEdit[]
+  undoFuture: PageEdit[]
+  /** Set after first hydrate from GET /pages/:id (or explicit load). */
+  hydrated: boolean
 }
 
 interface SessionState {
   selectedPageId: number | null
   chapterSlug: string | null
-  fontOverride: string | null
   viewMode: ViewMode
   splitRatio: number
   pages: Record<number, PageSession>
-  /** First-visit coachmark dismissed. */
   guideDismissed: boolean
 
   setChapterSlug: (slug: string | null) => void
   selectPage: (pageId: number | null) => void
   selectBubble: (bubbleId: number | null) => void
-  toggleLayer: (pageId: number, layerId: string) => void
-  setLayerEnabled: (pageId: number, layerId: string, enabled: boolean) => void
-  setTextOverride: (pageId: number, bubbleId: number, text: string) => void
-  clearTextOverride: (pageId: number, bubbleId: number) => void
-  setFontOverride: (fontKey: string | null) => void
+
+  /** Load server overlay into session (no-op if dirty local edits exist). */
+  hydrateEdit: (pageId: number, edit: PageEdit | null | undefined, rev?: number) => void
+  /** Force-replace overlay after successful save or reset. */
+  setEditFromServer: (pageId: number, edit: PageEdit) => void
+
+  patchBubble: (
+    pageId: number,
+    bubbleId: number,
+    patch: { [K in keyof BubbleEdit]?: BubbleEdit[K] | null } | null,
+    opts?: { undo?: boolean },
+  ) => void
+  setBubbleText: (pageId: number, bubbleId: number, text: string) => void
+  clearBubbleText: (pageId: number, bubbleId: number) => void
   setBubbleFont: (pageId: number, bubbleId: number, fontKey: string | null) => void
   setSizeOverride: (pageId: number, bubbleId: number, scale: number | null) => void
+  setPageFont: (pageId: number, fontKey: string | null) => void
+  toggleLayer: (pageId: number, layerId: string) => void
+  setLayerEnabled: (pageId: number, layerId: string, enabled: boolean) => void
+  setBubbleDone: (pageId: number, bubbleId: number, done: boolean) => void
+  toggleBubbleDone: (pageId: number, bubbleId: number) => void
+
   setLayouts: (pageId: number, layouts: BubbleLayout[]) => void
   applyTypeset: (
     pageId: number,
@@ -40,22 +68,41 @@ interface SessionState {
   ) => void
   setViewMode: (mode: ViewMode) => void
   setSplitRatio: (ratio: number) => void
-  resetPage: (pageId: number) => void
+
+  markSaving: (pageId: number) => void
+  markSaved: (pageId: number, edit: PageEdit) => void
+  markSaveError: (pageId: number, message: string) => void
+  /** Keep local overlay content; adopt server rev after a 409 so retry can succeed. */
+  syncRevFromServer: (pageId: number, rev: number) => void
+  /** After 409 — adopt server edit and stay dirty so user can retry. */
+  adoptServerEdit: (pageId: number, edit: PageEdit) => void
+
+  undo: (pageId: number) => void
+  redo: (pageId: number) => void
+
+  resetPageLocal: (pageId: number) => void
   clearTypeset: (pageId: number) => void
   resetAll: () => void
   dismissGuide: () => void
   pageSession: (pageId: number | null | undefined) => PageSession
 }
 
+export function emptyEdit(rev = 0): PageEdit {
+  return { rev, page: {}, bubbles: {}, paint: [] }
+}
+
 function emptyPage(): PageSession {
   return {
     selectedBubbleId: null,
-    disabledLayerIds: new Set(),
-    textOverrides: {},
-    bubbleFontOverrides: {},
-    sizeOverrides: {},
+    edit: emptyEdit(0),
+    dirty: false,
+    saveStatus: 'idle',
+    saveError: null,
     layoutsByBubble: {},
     textLayers: null,
+    undoPast: [],
+    undoFuture: [],
+    hydrated: false,
   }
 }
 
@@ -64,6 +111,53 @@ function ensurePage(
   pageId: number,
 ): PageSession {
   return pages[pageId] ?? emptyPage()
+}
+
+function cloneEdit(edit: PageEdit): PageEdit {
+  return structuredClone(edit)
+}
+
+function bubbleKey(id: number): string {
+  return String(id)
+}
+
+/** Infer bubble id from layer id like cln_3 / txt_3. */
+function bubbleIdFromLayer(layerId: string): number | null {
+  const m = /^(?:cln|txt)_(\d+)$/.exec(layerId)
+  return m ? Number(m[1]) : null
+}
+
+function pruneBubble(be: BubbleEdit): BubbleEdit | null {
+  const next: BubbleEdit = { ...be }
+  if (next.layers_off && next.layers_off.length === 0) delete next.layers_off
+  if (next.done === false) delete next.done
+  if (Object.keys(next).length === 0) return null
+  return next
+}
+
+function withBubblePatch(
+  edit: PageEdit,
+  bubbleId: number,
+  patch: { [K in keyof BubbleEdit]?: BubbleEdit[K] | null } | null,
+): PageEdit {
+  const key = bubbleKey(bubbleId)
+  const bubbles = { ...edit.bubbles }
+  if (patch === null) {
+    delete bubbles[key]
+    return { ...edit, bubbles }
+  }
+  const cur = { ...(bubbles[key] ?? {}) }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) {
+      delete cur[k as keyof BubbleEdit]
+    } else {
+      ;(cur as Record<string, unknown>)[k] = v
+    }
+  }
+  const pruned = pruneBubble(cur)
+  if (pruned) bubbles[key] = pruned
+  else delete bubbles[key]
+  return { ...edit, bubbles }
 }
 
 const GUIDE_KEY = 'fukiflow.guideDismissed'
@@ -76,10 +170,38 @@ function readGuideDismissed(): boolean {
   }
 }
 
+type Mutator = (edit: PageEdit) => PageEdit
+
+function applyEditMutation(
+  pages: Record<number, PageSession>,
+  pageId: number,
+  mutate: Mutator,
+  opts?: { undo?: boolean },
+): Record<number, PageSession> {
+  const cur = ensurePage(pages, pageId)
+  const recordUndo = opts?.undo !== false
+  const nextEdit = mutate(cur.edit)
+  const undoPast = recordUndo
+    ? [...cur.undoPast, cloneEdit(cur.edit)].slice(-UNDO_CAP)
+    : cur.undoPast
+  const undoFuture = recordUndo ? [] : cur.undoFuture
+  return {
+    ...pages,
+    [pageId]: {
+      ...cur,
+      edit: nextEdit,
+      dirty: true,
+      saveStatus: cur.saveStatus === 'error' ? 'error' : 'idle',
+      saveError: cur.saveStatus === 'error' ? cur.saveError : null,
+      undoPast,
+      undoFuture,
+    },
+  }
+}
+
 export const useSession = create<SessionState>((set, get) => ({
   selectedPageId: null,
   chapterSlug: null,
-  fontOverride: null,
   viewMode: 'composed',
   splitRatio: 0.5,
   pages: {},
@@ -103,31 +225,32 @@ export const useSession = create<SessionState>((set, get) => ({
     })
   },
 
-  toggleLayer: (pageId, layerId) => {
+  hydrateEdit: (pageId, edit, rev) => {
     set((s) => {
       const cur = ensurePage(s.pages, pageId)
-      const next = new Set(cur.disabledLayerIds)
-      if (next.has(layerId)) next.delete(layerId)
-      else next.add(layerId)
+      // Don't clobber in-progress local edits.
+      if (cur.dirty) return {}
+      const next = edit ? cloneEdit(edit) : emptyEdit(rev ?? 0)
+      if (rev != null) next.rev = rev
       return {
-        pages: { ...s.pages, [pageId]: { ...cur, disabledLayerIds: next } },
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: next,
+            dirty: false,
+            saveStatus: next.rev > 0 ? 'saved' : 'idle',
+            saveError: null,
+            hydrated: true,
+            undoPast: cur.hydrated ? cur.undoPast : [],
+            undoFuture: cur.hydrated ? cur.undoFuture : [],
+          },
+        },
       }
     })
   },
 
-  setLayerEnabled: (pageId, layerId, enabled) => {
-    set((s) => {
-      const cur = ensurePage(s.pages, pageId)
-      const next = new Set(cur.disabledLayerIds)
-      if (enabled) next.delete(layerId)
-      else next.add(layerId)
-      return {
-        pages: { ...s.pages, [pageId]: { ...cur, disabledLayerIds: next } },
-      }
-    })
-  },
-
-  setTextOverride: (pageId, bubbleId, text) => {
+  setEditFromServer: (pageId, edit) => {
     set((s) => {
       const cur = ensurePage(s.pages, pageId)
       return {
@@ -135,52 +258,136 @@ export const useSession = create<SessionState>((set, get) => ({
           ...s.pages,
           [pageId]: {
             ...cur,
-            textOverrides: { ...cur.textOverrides, [bubbleId]: text },
+            edit: cloneEdit(edit),
+            dirty: false,
+            saveStatus: 'saved',
+            saveError: null,
+            hydrated: true,
+            undoPast: [],
+            undoFuture: [],
+            layoutsByBubble: {},
+            textLayers: null,
           },
         },
       }
     })
   },
 
-  clearTextOverride: (pageId, bubbleId) => {
-    set((s) => {
-      const cur = ensurePage(s.pages, pageId)
-      const next = { ...cur.textOverrides }
-      delete next[bubbleId]
-      return {
-        pages: {
-          ...s.pages,
-          [pageId]: { ...cur, textOverrides: next },
-        },
-      }
-    })
+  patchBubble: (pageId, bubbleId, patch, opts) => {
+    set((s) => ({
+      pages: applyEditMutation(
+        s.pages,
+        pageId,
+        (edit) => withBubblePatch(edit, bubbleId, patch),
+        opts,
+      ),
+    }))
   },
 
-  setFontOverride: (fontKey) => set({ fontOverride: fontKey }),
+  setBubbleText: (pageId, bubbleId, text) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) =>
+        withBubblePatch(edit, bubbleId, { text }),
+      ),
+    }))
+  },
+
+  clearBubbleText: (pageId, bubbleId) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) =>
+        withBubblePatch(edit, bubbleId, { text: null }),
+      ),
+    }))
+  },
 
   setBubbleFont: (pageId, bubbleId, fontKey) => {
-    set((s) => {
-      const cur = ensurePage(s.pages, pageId)
-      const next = { ...cur.bubbleFontOverrides }
-      if (fontKey == null) delete next[bubbleId]
-      else next[bubbleId] = fontKey
-      return {
-        pages: {
-          ...s.pages,
-          [pageId]: { ...cur, bubbleFontOverrides: next },
-        },
-      }
-    })
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) =>
+        withBubblePatch(edit, bubbleId, { font: fontKey }),
+      ),
+    }))
   },
 
   setSizeOverride: (pageId, bubbleId, scale) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => {
+        if (scale == null || scale === 1) {
+          return withBubblePatch(edit, bubbleId, { font_scale: null })
+        }
+        return withBubblePatch(edit, bubbleId, { font_scale: scale })
+      }),
+    }))
+  },
+
+  setPageFont: (pageId, fontKey) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => {
+        const page = { ...(edit.page ?? {}) }
+        if (!fontKey) delete page.font
+        else page.font = fontKey
+        return { ...edit, page }
+      }),
+    }))
+  },
+
+  toggleLayer: (pageId, layerId) => {
+    const bid = bubbleIdFromLayer(layerId)
+    if (bid == null) return
     set((s) => {
       const cur = ensurePage(s.pages, pageId)
-      const next = { ...cur.sizeOverrides }
-      if (scale == null || scale === 1) delete next[bubbleId]
-      else next[bubbleId] = scale
+      const be = cur.edit.bubbles[bubbleKey(bid)] ?? {}
+      const off = new Set(be.layers_off ?? [])
+      if (off.has(layerId)) off.delete(layerId)
+      else off.add(layerId)
       return {
-        pages: { ...s.pages, [pageId]: { ...cur, sizeOverrides: next } },
+        pages: applyEditMutation(s.pages, pageId, (edit) =>
+          withBubblePatch(edit, bid, {
+            layers_off: off.size ? [...off] : null,
+          }),
+        ),
+      }
+    })
+  },
+
+  setLayerEnabled: (pageId, layerId, enabled) => {
+    const bid = bubbleIdFromLayer(layerId)
+    if (bid == null) return
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      const be = cur.edit.bubbles[bubbleKey(bid)] ?? {}
+      const off = new Set(be.layers_off ?? [])
+      if (enabled) off.delete(layerId)
+      else off.add(layerId)
+      return {
+        pages: applyEditMutation(s.pages, pageId, (edit) =>
+          withBubblePatch(edit, bid, {
+            layers_off: off.size ? [...off] : null,
+          }),
+        ),
+      }
+    })
+  },
+
+  setBubbleDone: (pageId, bubbleId, done) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) =>
+        withBubblePatch(edit, bubbleId, {
+          done: done ? true : null,
+        }),
+      ),
+    }))
+  },
+
+  toggleBubbleDone: (pageId, bubbleId) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      const done = Boolean(cur.edit.bubbles[bubbleKey(bubbleId)]?.done)
+      return {
+        pages: applyEditMutation(s.pages, pageId, (edit) =>
+          withBubblePatch(edit, bubbleId, {
+            done: !done ? true : null,
+          }),
+        ),
       }
     })
   },
@@ -219,7 +426,157 @@ export const useSession = create<SessionState>((set, get) => ({
   setSplitRatio: (ratio) =>
     set({ splitRatio: Math.min(0.95, Math.max(0.05, ratio)) }),
 
-  resetPage: (pageId) => {
+  markSaving: (pageId) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: { ...cur, saveStatus: 'saving', saveError: null },
+        },
+      }
+    })
+  },
+
+  markSaved: (pageId, edit) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      const localCore = JSON.stringify({
+        page: cur.edit.page,
+        bubbles: cur.edit.bubbles,
+        paint: cur.edit.paint,
+      })
+      const savedCore = JSON.stringify({
+        page: edit.page,
+        bubbles: edit.bubbles,
+        paint: edit.paint,
+      })
+      const stillDirty = localCore !== savedCore
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: stillDirty
+              ? { ...cur.edit, rev: edit.rev }
+              : cloneEdit(edit),
+            dirty: stillDirty,
+            saveStatus: stillDirty ? 'idle' : 'saved',
+            saveError: null,
+            hydrated: true,
+          },
+        },
+      }
+    })
+  },
+
+  markSaveError: (pageId, message) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            saveStatus: 'error',
+            saveError: message,
+          },
+        },
+      }
+    })
+  },
+
+  syncRevFromServer: (pageId, rev) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      if (cur.edit.rev === rev) return {}
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: { ...cur.edit, rev },
+            // Stay dirty — local content still needs to land on the new rev.
+            dirty: true,
+            saveStatus: 'idle',
+            saveError: null,
+          },
+        },
+      }
+    })
+  },
+
+  adoptServerEdit: (pageId, edit) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: cloneEdit(edit),
+            dirty: true,
+            saveStatus: 'error',
+            saveError: 'Başka bir kayıt çakıştı — tekrar kaydedin',
+            hydrated: true,
+          },
+        },
+      }
+    })
+  },
+
+  undo: (pageId) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      if (!cur.undoPast.length) return {}
+      const prev = cur.undoPast[cur.undoPast.length - 1]!
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: cloneEdit(prev),
+            dirty: true,
+            saveStatus: 'idle',
+            saveError: null,
+            undoPast: cur.undoPast.slice(0, -1),
+            undoFuture: [cloneEdit(cur.edit), ...cur.undoFuture].slice(
+              0,
+              UNDO_CAP,
+            ),
+            layoutsByBubble: {},
+            textLayers: null,
+          },
+        },
+      }
+    })
+  },
+
+  redo: (pageId) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      if (!cur.undoFuture.length) return {}
+      const next = cur.undoFuture[0]!
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: cloneEdit(next),
+            dirty: true,
+            saveStatus: 'idle',
+            saveError: null,
+            undoPast: [...cur.undoPast, cloneEdit(cur.edit)].slice(-UNDO_CAP),
+            undoFuture: cur.undoFuture.slice(1),
+            layoutsByBubble: {},
+            textLayers: null,
+          },
+        },
+      }
+    })
+  },
+
+  resetPageLocal: (pageId) => {
     set((s) => {
       const prev = ensurePage(s.pages, pageId)
       return {
@@ -228,6 +585,8 @@ export const useSession = create<SessionState>((set, get) => ({
           [pageId]: {
             ...emptyPage(),
             selectedBubbleId: prev.selectedBubbleId,
+            hydrated: true,
+            saveStatus: 'saved',
           },
         },
       }
@@ -253,7 +612,6 @@ export const useSession = create<SessionState>((set, get) => ({
   resetAll: () =>
     set({
       pages: {},
-      fontOverride: null,
       viewMode: 'composed',
       splitRatio: 0.5,
     }),
@@ -272,3 +630,59 @@ export const useSession = create<SessionState>((set, get) => ({
     return ensurePage(get().pages, pageId)
   },
 }))
+
+/** Derive flat maps from overlay for compositor / typeset helpers. */
+export function textOverridesFromEdit(
+  edit: PageEdit | undefined,
+): Record<number, string> {
+  const out: Record<number, string> = {}
+  if (!edit) return out
+  for (const [k, be] of Object.entries(edit.bubbles)) {
+    if (be.text !== undefined) out[Number(k)] = be.text
+  }
+  return out
+}
+
+export function bubbleFontsFromEdit(
+  edit: PageEdit | undefined,
+): Record<number, string> {
+  const out: Record<number, string> = {}
+  if (!edit) return out
+  for (const [k, be] of Object.entries(edit.bubbles)) {
+    if (be.font) out[Number(k)] = be.font
+  }
+  return out
+}
+
+export function sizeOverridesFromEdit(
+  edit: PageEdit | undefined,
+): Record<number, number> {
+  const out: Record<number, number> = {}
+  if (!edit) return out
+  for (const [k, be] of Object.entries(edit.bubbles)) {
+    if (be.font_scale != null && be.font_scale !== 1) {
+      out[Number(k)] = be.font_scale
+    }
+  }
+  return out
+}
+
+export function disabledLayerIdsFromEdit(
+  edit: PageEdit | undefined,
+): Set<string> {
+  const out = new Set<string>()
+  if (!edit) return out
+  for (const be of Object.values(edit.bubbles)) {
+    for (const lid of be.layers_off ?? []) out.add(lid)
+  }
+  return out
+}
+
+export function doneCountFromEdit(edit: PageEdit | undefined): number {
+  if (!edit) return 0
+  return Object.values(edit.bubbles).filter((b) => b.done).length
+}
+
+export function pageFontFromEdit(edit: PageEdit | undefined): string | null {
+  return edit?.page?.font ?? null
+}

@@ -1,12 +1,19 @@
 import {
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { BubbleLayout, FontInfo, PageDetail, ViewMode } from '@/api/types'
-import { useSession } from '@/store/session'
+import {
+  bubbleFontsFromEdit,
+  disabledLayerIdsFromEdit,
+  pageFontFromEdit,
+  sizeOverridesFromEdit,
+  useSession,
+} from '@/store/session'
 import {
   composePage,
   fitTransform,
@@ -66,13 +73,23 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   const setSplitRatio = useSession((s) => s.setSplitRatio)
   const selectBubble = useSession((s) => s.selectBubble)
   const pageSession = useSession((s) => s.pages[pageId])
-  const fontOverride = useSession((s) => s.fontOverride)
 
   const selectedBubbleId = pageSession?.selectedBubbleId ?? null
-  const disabledLayerIds = pageSession?.disabledLayerIds ?? EMPTY_SET
+  const edit = pageSession?.edit
+  const disabledLayerIds = useMemo(
+    () => (edit ? disabledLayerIdsFromEdit(edit) : EMPTY_SET),
+    [edit],
+  )
   const layoutsByBubble = pageSession?.layoutsByBubble ?? EMPTY_LAYOUTS
-  const sizeOverrides = pageSession?.sizeOverrides ?? EMPTY_NUM_RECORD
-  const bubbleFontOverrides = pageSession?.bubbleFontOverrides ?? EMPTY_STR_RECORD
+  const sizeOverrides = useMemo(
+    () => (edit ? sizeOverridesFromEdit(edit) : EMPTY_NUM_RECORD),
+    [edit],
+  )
+  const bubbleFontOverrides = useMemo(
+    () => (edit ? bubbleFontsFromEdit(edit) : EMPTY_STR_RECORD),
+    [edit],
+  )
+  const fontOverride = pageFontFromEdit(edit)
 
   const neededFontKeys = fonts.map((f) => f.key)
   const { ready: fontsReady } = usePageFonts(fonts, neededFontKeys)
@@ -261,7 +278,13 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   })
 
   const schedulePaint = useEffectEvent(() => {
-    if (rafRef.current != null) return
+    // Cancel any pending frame first. React Strict Mode runs effect cleanups
+    // and re-runs effects on the same instance; if we leave a cancelled RAF id
+    // in rafRef, later schedulePaint calls no-op forever and the canvas stays blank.
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null
       paint()
@@ -289,7 +312,10 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
 
   useEffect(() => {
     return () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
     }
   }, [])
 

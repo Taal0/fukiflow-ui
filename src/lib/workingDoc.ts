@@ -1,5 +1,12 @@
-import type { Layer, PageDoc, PageDetail } from '@/api/types'
+import type { Layer, PageDoc, PageDetail, PageEdit } from '@/api/types'
 import type { PageSession } from '@/store/session'
+import {
+  bubbleFontsFromEdit,
+  disabledLayerIdsFromEdit,
+  pageFontFromEdit,
+  sizeOverridesFromEdit,
+  textOverridesFromEdit,
+} from '@/store/session'
 import type { TypesetBody } from '@/api/client'
 
 /** Merge session typeset layers into the seed PageDoc for compose/download. */
@@ -37,11 +44,14 @@ export function buildWorkingDoc(
 export function buildTypesetBody(
   detail: PageDetail,
   session: PageSession | undefined,
-  pageFont: string | null,
+  pageFont?: string | null,
 ): TypesetBody {
-  const textOverrides = session?.textOverrides ?? {}
-  const sizeOverrides = session?.sizeOverrides ?? {}
-  const bubbleFonts = session?.bubbleFontOverrides ?? {}
+  const edit = session?.edit
+  const textOverrides = textOverridesFromEdit(edit)
+  const sizeOverrides = sizeOverridesFromEdit(edit)
+  const bubbleFonts = bubbleFontsFromEdit(edit)
+  const resolvedPageFont =
+    pageFont !== undefined ? pageFont : pageFontFromEdit(edit)
 
   const texts = detail.doc.texts.map((t) => ({
     bubble_id: t.bubble_id,
@@ -66,22 +76,34 @@ export function buildTypesetBody(
     ...Object.keys(bubbleFonts).map(Number),
   ])
   for (const id of bubbleIds) {
-    const entry: { font_scale?: number; font?: string } = {}
+    const entry: { font_scale?: number; font?: string; font_px?: number } = {}
     const scale = sizeOverrides[id]
     if (scale != null && scale !== 1) entry.font_scale = scale
     const font = bubbleFonts[id]
     if (font) entry.font = font
+    const fontPx = edit?.bubbles[String(id)]?.font_px
+    if (fontPx != null) entry.font_px = fontPx
     if (Object.keys(entry).length) overrides[String(id)] = entry
   }
 
   return {
     texts,
-    font: pageFont || undefined,
+    font: resolvedPageFont || undefined,
     overrides: Object.keys(overrides).length ? overrides : undefined,
   }
 }
 
 export function disabledOffList(session: PageSession | undefined): string[] {
   if (!session) return []
-  return [...session.disabledLayerIds]
+  return [...disabledLayerIdsFromEdit(session.edit)]
+}
+
+/** Payload shape for PUT /api/pages/:id/edit */
+export function editPayload(edit: PageEdit): PageEdit {
+  return {
+    rev: edit.rev,
+    page: edit.page ?? {},
+    bubbles: edit.bubbles ?? {},
+    paint: edit.paint ?? [],
+  }
 }

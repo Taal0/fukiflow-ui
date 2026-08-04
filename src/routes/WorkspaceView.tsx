@@ -1,16 +1,30 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ApiError } from '@/api/client'
-import { useChapterPages, useChapters, useFonts, usePage } from '@/api/queries'
+import {
+  useChapterPages,
+  useChapters,
+  useDeletePageEditMutation,
+  useFonts,
+  usePage,
+} from '@/api/queries'
 import { PageCanvas } from '@/canvas/PageCanvas'
 import { BubbleList } from '@/components/BubbleList'
 import { MobileWarning } from '@/components/MobileWarning'
 import { OnboardingGuide } from '@/components/OnboardingGuide'
 import { PageGallery } from '@/components/PageGallery'
 import { Toolbar } from '@/components/Toolbar'
+import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
 import { useWorkspaceKeys } from '@/hooks/useWorkspaceKeys'
 import { buildWorkingDoc } from '@/lib/workingDoc'
-import { useSession } from '@/store/session'
+import {
+  bubbleFontsFromEdit,
+  disabledLayerIdsFromEdit,
+  doneCountFromEdit,
+  sizeOverridesFromEdit,
+  textOverridesFromEdit,
+  useSession,
+} from '@/store/session'
 
 export function WorkspaceView() {
   const chapters = useChapters()
@@ -20,13 +34,18 @@ export function WorkspaceView() {
   const selectPage = useSession((s) => s.selectPage)
   const selectBubble = useSession((s) => s.selectBubble)
   const setLayerEnabled = useSession((s) => s.setLayerEnabled)
-  const setTextOverride = useSession((s) => s.setTextOverride)
-  const clearTextOverride = useSession((s) => s.clearTextOverride)
+  const setBubbleText = useSession((s) => s.setBubbleText)
+  const clearBubbleText = useSession((s) => s.clearBubbleText)
   const setBubbleFont = useSession((s) => s.setBubbleFont)
   const setSizeOverride = useSession((s) => s.setSizeOverride)
+  const setBubbleDone = useSession((s) => s.setBubbleDone)
+  const hydrateEdit = useSession((s) => s.hydrateEdit)
+  const resetPageLocal = useSession((s) => s.resetPageLocal)
   const pageSession = useSession((s) =>
     selectedPageId != null ? s.pages[selectedPageId] : undefined,
   )
+  const deleteEdit = useDeletePageEditMutation()
+  const [hideDone, setHideDone] = useState(false)
 
   // Auto-select first chapter + first page.
   useEffect(() => {
@@ -42,6 +61,19 @@ export function WorkspaceView() {
     if (selectedPageId != null || !pagesQ.data?.length) return
     selectPage(pagesQ.data[0]!.id)
   }, [pagesQ.data, selectedPageId, selectPage])
+
+  // Hydrate overlay from page payload (single request).
+  useEffect(() => {
+    if (!pageQ.data || selectedPageId == null) return
+    if (pageQ.data.page.id !== selectedPageId) return
+    hydrateEdit(
+      selectedPageId,
+      pageQ.data.edit,
+      pageQ.data.edit_rev ?? pageQ.data.edit?.rev ?? 0,
+    )
+  }, [pageQ.data, selectedPageId, hydrateEdit])
+
+  useAutosave()
 
   const { pending: typesetPending, error: typesetError } = useDebouncedTypeset(
     pageQ.data,
@@ -66,6 +98,15 @@ export function WorkspaceView() {
       ? `${chapterTitle} · s. ${pageQ.data.page.page_no}`
       : undefined
 
+  const sessionPages = useSession((s) => s.pages)
+  const pagesWithProgress = useMemo(() => {
+    return (pagesQ.data ?? []).map((p) => {
+      const session = sessionPages[p.id]
+      if (!session?.hydrated) return p
+      return { ...p, done_count: doneCountFromEdit(session.edit) }
+    })
+  }, [pagesQ.data, sessionPages])
+
   const catalogError =
     chapters.error instanceof ApiError
       ? chapters.error.message
@@ -80,6 +121,27 @@ export function WorkspaceView() {
   const fontsUnavailable =
     fontsQ.error instanceof ApiError && fontsQ.error.status === 503
 
+  const edit = pageSession?.edit
+  const textOverrides = textOverridesFromEdit(edit)
+  const bubbleFontOverrides = bubbleFontsFromEdit(edit)
+  const sizeOverrides = sizeOverridesFromEdit(edit)
+  const disabledLayerIds = disabledLayerIdsFromEdit(edit)
+
+  const resetPage = async () => {
+    if (selectedPageId == null) return
+    try {
+      await deleteEdit.mutateAsync(selectedPageId)
+      resetPageLocal(selectedPageId)
+    } catch (err) {
+      // Local reset still useful if server delete fails on missing row.
+      if (err instanceof ApiError && err.status === 404) {
+        resetPageLocal(selectedPageId)
+        return
+      }
+      console.error(err)
+    }
+  }
+
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <MobileWarning />
@@ -92,6 +154,10 @@ export function WorkspaceView() {
         chapterSlug={chapterSlug}
         typesetPending={typesetPending}
         typesetError={typesetError}
+        saveStatus={pageSession?.saveStatus}
+        saveError={pageSession?.saveError}
+        dirty={pageSession?.dirty}
+        onResetPage={() => void resetPage()}
       />
 
       {(fontsUnavailable || catalogError) && (
@@ -108,7 +174,7 @@ export function WorkspaceView() {
 
       <div className="flex min-h-0 flex-1">
         <PageGallery
-          pages={pagesQ.data ?? []}
+          pages={pagesWithProgress}
           selectedPageId={selectedPageId}
           onSelect={selectPage}
           loading={pagesQ.isLoading || chapters.isLoading}
@@ -150,13 +216,16 @@ export function WorkspaceView() {
           <BubbleList
             doc={workingDetail.doc}
             selectedBubbleId={pageSession?.selectedBubbleId ?? null}
-            disabledLayerIds={pageSession?.disabledLayerIds ?? new Set()}
+            disabledLayerIds={disabledLayerIds}
             layoutsByBubble={pageSession?.layoutsByBubble ?? {}}
-            textOverrides={pageSession?.textOverrides ?? {}}
-            bubbleFontOverrides={pageSession?.bubbleFontOverrides ?? {}}
-            sizeOverrides={pageSession?.sizeOverrides ?? {}}
+            textOverrides={textOverrides}
+            bubbleFontOverrides={bubbleFontOverrides}
+            sizeOverrides={sizeOverrides}
+            bubbleEdits={edit?.bubbles ?? {}}
             fonts={fontsQ.data ?? []}
             typesetPending={typesetPending}
+            hideDone={hideDone}
+            onHideDoneChange={setHideDone}
             onSelect={selectBubble}
             onToggleLayer={(layerId, enabled) => {
               if (selectedPageId == null) return
@@ -164,11 +233,11 @@ export function WorkspaceView() {
             }}
             onTextChange={(bubbleId, text) => {
               if (selectedPageId == null) return
-              setTextOverride(selectedPageId, bubbleId, text)
+              setBubbleText(selectedPageId, bubbleId, text)
             }}
             onResetText={(bubbleId) => {
               if (selectedPageId == null) return
-              clearTextOverride(selectedPageId, bubbleId)
+              clearBubbleText(selectedPageId, bubbleId)
             }}
             onBubbleFont={(bubbleId, fontKey) => {
               if (selectedPageId == null) return
@@ -177,6 +246,10 @@ export function WorkspaceView() {
             onSizeChange={(bubbleId, scale) => {
               if (selectedPageId == null) return
               setSizeOverride(selectedPageId, bubbleId, scale)
+            }}
+            onToggleDone={(bubbleId, done) => {
+              if (selectedPageId == null) return
+              setBubbleDone(selectedPageId, bubbleId, done)
             }}
           />
         ) : (

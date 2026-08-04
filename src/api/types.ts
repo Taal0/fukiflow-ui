@@ -128,7 +128,54 @@ export interface PageSummary {
   clean_status: string
   typeset_status: string
   bubble_count: number
+  /** Bubbles marked done in the PageEdit overlay. */
+  done_count?: number
 }
+
+/** Per-bubble overlay fields persisted in PageEdit. */
+export interface BubbleEdit {
+  text?: string
+  font?: string
+  /** Legacy % scale; Phase 1 prefers font_px. */
+  font_scale?: number
+  font_px?: number
+  leading?: number
+  align?: 'left' | 'center' | 'right' | string
+  frame?: BBox
+  layers_off?: string[]
+  done?: boolean
+}
+
+export interface PaintStroke {
+  id: string
+  bubble_id?: number
+  mode: 'fill' | 'restore'
+  color?: [number, number, number]
+  radius_px: number
+  points: Point[]
+}
+
+/** Letterer overlay — seed PageDoc stays immutable. */
+export interface PageEdit {
+  rev: number
+  page?: { font?: string }
+  bubbles: Record<string, BubbleEdit>
+  paint?: PaintStroke[]
+}
+
+export interface PageProgress {
+  page_id: number
+  page_no: number
+  bubble_count: number
+  done_count: number
+}
+
+export interface ChapterProgress {
+  slug: string
+  pages: PageProgress[]
+}
+
+export type SaveStatus = 'idle' | 'saved' | 'saving' | 'error'
 
 export interface LayerAsset {
   layer_id: string
@@ -152,6 +199,9 @@ export interface PageDetail {
   doc: PageDoc
   assets: PageAssets
   layer_assets: LayerAsset[]
+  /** PageEdit overlay; empty shape when none saved yet. */
+  edit?: PageEdit | null
+  edit_rev?: number
 }
 
 export interface FontInfo {
