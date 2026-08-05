@@ -13,7 +13,6 @@ import type {
   PageDetail,
   PaintStroke,
   Point,
-  ViewMode,
 } from '@/api/types'
 import {
   clampFrame,
@@ -118,7 +117,12 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   const appendPaintStroke = useSession((s) => s.appendPaintStroke)
   const setBrushColor = useSession((s) => s.setBrushColor)
   const brush = useSession((s) => s.brush)
+  const theme = useSession((s) => s.ui.theme)
+  const zoomCmd = useSession((s) => s.ui.zoomCmd)
+  const setZoomPercent = useSession((s) => s.setZoomPercent)
+  const activeTool = useSession((s) => s.ui.activeTool)
   const pageSession = useSession((s) => s.pages[pageId])
+  const [toolHint, setToolHint] = useState<string | null>(null)
 
   const selectedBubbleId = pageSession?.selectedBubbleId ?? null
   const edit = pageSession?.edit
@@ -287,7 +291,7 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     ctx.clearRect(0, 0, cssW, cssH)
     ctx.fillStyle = getComputedStyle(document.documentElement)
       .getPropertyValue('--color-canvas-bg')
-      .trim() || '#e8e0d0'
+      .trim() || '#0e0f11'
     ctx.fillRect(0, 0, cssW, cssH)
 
     const { width: pw, height: ph } = detail.doc.source
@@ -404,19 +408,21 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       const splitX = cssW * splitRatio
       drawComposedAt(splitX)
       drawOriginalAt(splitX)
+      // Split sash is a DOM handle — only draw a thin divider line.
       ctx.save()
-      ctx.fillStyle = '#b83a26'
+      const accent =
+        getComputedStyle(document.documentElement)
+          .getPropertyValue('--color-accent')
+          .trim() || '#ff6a4d'
+      ctx.fillStyle = accent
       ctx.fillRect(splitX - 1, 0, 2, cssH)
-      ctx.beginPath()
-      ctx.arc(splitX, cssH / 2, 10, 0, Math.PI * 2)
-      ctx.fillStyle = '#b83a26'
-      ctx.fill()
-      ctx.fillStyle = '#fff'
-      ctx.font = '10px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText('◂▸', splitX, cssH / 2)
       ctx.restore()
+    }
+
+    // Keep status zoom in sync with transform (avoid store churn).
+    const pct = Math.round((transformRef.current.scale || 1) * 100)
+    if (useSession.getState().ui.zoomPercent !== pct) {
+      setZoomPercent(pct)
     }
   })
 
@@ -455,8 +461,54 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     brush.radiusPx,
     cursorPage,
     insetOverrideBubbleIds,
-    schedulePaint,
+    theme,
   ])
+
+  // Apply zoom commands from ZoomControls.
+  useEffect(() => {
+    if (!zoomCmd || !ready) return
+    const cssW = viewSize.w || wrapRef.current?.clientWidth || 0
+    const cssH = viewSize.h || wrapRef.current?.clientHeight || 0
+    if (cssW < 1 || cssH < 1) return
+
+    if (zoomCmd.kind === 'fit') {
+      userTransformedRef.current = false
+      transformRef.current = fitTransform(sourceW, sourceH, cssW, cssH)
+    } else if (zoomCmd.kind === '100') {
+      userTransformedRef.current = true
+      const scale = 1
+      transformRef.current = {
+        scale,
+        offsetX: (cssW - sourceW * scale) / 2,
+        offsetY: (cssH - sourceH * scale) / 2,
+      }
+    } else if (zoomCmd.kind === 'set') {
+      userTransformedRef.current = true
+      const scale = Math.min(8, Math.max(0.05, zoomCmd.scale))
+      const cx = cssW / 2
+      const cy = cssH / 2
+      const page = screenToPage(cx, cy, transformRef.current)
+      transformRef.current = {
+        scale,
+        offsetX: cx - page.x * scale,
+        offsetY: cy - page.y * scale,
+      }
+    }
+    schedulePaint()
+  }, [zoomCmd, ready, viewSize.w, viewSize.h, sourceW, sourceH])
+
+  // Transient tool hint on tool change.
+  useEffect(() => {
+    const labels: Record<string, string> = {
+      select: 'Seç',
+      frame: 'Kutu — taşı / boyutlandır',
+      paint: 'Boya fırçası',
+      restore: 'Geri al fırçası',
+    }
+    setToolHint(labels[activeTool] ?? null)
+    const t = window.setTimeout(() => setToolHint(null), 2000)
+    return () => window.clearTimeout(t)
+  }, [activeTool])
 
   useEffect(() => {
     return () => {
@@ -502,19 +554,7 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     const y = e.clientY - rect.top
 
     if (viewMode === 'split') {
-      const splitX = (viewSize.w || rect.width) * splitRatio
-      if (Math.abs(x - splitX) < 12) {
-        dragRef.current = {
-          mode: 'split',
-          startX: x,
-          startY: y,
-          originX: transformRef.current.offsetX,
-          originY: transformRef.current.offsetY,
-          originSplit: splitRatio,
-        }
-        e.currentTarget.setPointerCapture(e.pointerId)
-        return
-      }
+      // Split sash is a DOM handle — ignore canvas hits near it.
     }
 
     if (e.button === 1 || e.shiftKey || e.button === 2) {
@@ -645,7 +685,6 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     }
 
     if (drag.mode === 'split') {
-      setSplitRatio(x / Math.max(1, rect.width))
       return
     }
 
@@ -754,6 +793,30 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     schedulePaint()
   }
 
+  const onSplitPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const rect = wrap.getBoundingClientRect()
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    const onMove = (ev: PointerEvent) => {
+      const x = ev.clientX - rect.left
+      setSplitRatio(x / Math.max(1, rect.width))
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      try {
+        ;(ev.target as HTMLElement).releasePointerCapture?.(ev.pointerId)
+      } catch {
+        /* ignore */
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   return (
     <div
       ref={wrapRef}
@@ -770,6 +833,32 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
         onDoubleClick={onDoubleClick}
         onContextMenu={(e) => e.preventDefault()}
       />
+      {viewMode === 'split' && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-valuenow={Math.round(splitRatio * 100)}
+          aria-label="Görünüm ayıracı"
+          tabIndex={0}
+          onPointerDown={onSplitPointerDown}
+          onKeyDown={(e) => {
+            const step = e.shiftKey ? 0.05 : 0.02
+            if (e.key === 'ArrowLeft') {
+              e.preventDefault()
+              setSplitRatio(splitRatio - step)
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault()
+              setSplitRatio(splitRatio + step)
+            }
+          }}
+          className="absolute top-0 z-10 h-full w-4 -translate-x-1/2 cursor-col-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+          style={{ left: `${splitRatio * 100}%` }}
+        >
+          <span className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[var(--color-accent)] text-[10px] text-white shadow-sm">
+            ▸◂
+          </span>
+        </div>
+      )}
       {!ready && !loadError && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-[var(--color-ink-muted)]">
           Sayfa yükleniyor…
@@ -780,29 +869,11 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
           {loadError}
         </div>
       )}
-      <ViewModeHint mode={viewMode} />
-    </div>
-  )
-}
-
-function ViewModeHint({ mode }: { mode: ViewMode }) {
-  const brush = useSession((s) => s.brush)
-  const label =
-    mode === 'composed'
-      ? 'Sonuç'
-      : mode === 'original'
-        ? 'Orijinal'
-        : 'Yan yana — ayıracı sürükleyin'
-  const tool =
-    brush.mode === 'fill'
-      ? ` · fırça boya ${brush.radiusPx}px`
-      : brush.mode === 'restore'
-        ? ` · fırça geri al ${brush.radiusPx}px`
-        : ' · kutuyu taşı/boyutlandır · Oto dizgi'
-  return (
-    <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-md bg-[var(--color-surface-raised)]/90 px-3 py-1 text-xs text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
-      {label}
-      {tool}
+      {toolHint && (
+        <div className="pointer-events-none absolute bottom-14 left-1/2 z-10 -translate-x-1/2 rounded-md bg-[var(--color-surface-raised)]/95 px-3 py-1 text-[length:var(--text-ui)] text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
+          {toolHint}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,51 +1,84 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
-  --font-display: "Fraunces", "Georgia", serif;
+  /* UI chrome — dense, readable at meta/ui sizes */
+  --font-sans: "Source Sans 3", "Segoe UI", sans-serif;
+  /* Wordmark / brand — graphic, slightly condensed */
+  --font-display: "Syne", "Avenir Next", sans-serif;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+}
 
-  --color-surface: #f7f2e9;
-  --color-surface-raised: #fffdf8;
-  --color-surface-muted: #ebe4d6;
-  --color-ink: #1c1a16;
-  --color-ink-muted: #5c564c;
-  --color-accent: #b83a26;
-  --color-accent-soft: color-mix(in srgb, #b83a26 14%, transparent);
-  --color-border: #d9d0bf;
+/* Runtime-swappable colors — not inside @theme so data-theme can override. */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-surface: #f4f5f6;
+  --color-surface-raised: #ffffff;
+  --color-surface-muted: #e8eaec;
+  --color-ink: #16181b;
+  --color-ink-muted: #5c626a;
+  --color-accent: #c8391f;
+  --color-accent-soft: color-mix(in srgb, #c8391f 14%, transparent);
+  --color-border: #d5d8dc;
   --color-success: #2f6b4f;
   --color-warn: #9a6b1f;
-  --color-danger: #b83a26;
-  --color-canvas-bg: #e8e0d0;
+  --color-danger: #c8391f;
+  --color-canvas-bg: #c9ccd1;
+  --color-focus: #2a6fdb;
+  --color-selection: color-mix(in srgb, #c8391f 18%, transparent);
+  --text-meta: 0.6875rem;
+  --text-ui: 0.75rem;
+  --text-title: 0.8125rem;
+}
 
-  --radius-sm: 0.25rem;
-  --radius-md: 0.4rem;
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-surface: #17181b;
+  --color-surface-raised: #1f2024;
+  --color-surface-muted: #2a2c31;
+  --color-ink: #e9eaec;
+  --color-ink-muted: #969ba3;
+  --color-accent: #ff6a4d;
+  --color-accent-soft: color-mix(in srgb, #ff6a4d 18%, transparent);
+  --color-border: #34373d;
+  --color-success: #5fbf8f;
+  --color-warn: #d9a441;
+  --color-danger: #f2705a;
+  --color-canvas-bg: #0e0f11;
+  --color-focus: #5b9cff;
+  --color-selection: color-mix(in srgb, #ff6a4d 22%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --color-surface: #141412;
-    --color-surface-raised: #1c1b18;
-    --color-surface-muted: #24231f;
-    --color-ink: #f2ece2;
-    --color-ink-muted: #a8a094;
-    --color-accent: #e05a47;
-    --color-accent-soft: color-mix(in srgb, #e05a47 18%, transparent);
-    --color-border: #33312b;
-    --color-success: #6fbf96;
-    --color-warn: #d4a24a;
-    --color-danger: #e05a47;
-    --color-canvas-bg: #0e0e0c;
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --color-surface: #17181b;
+    --color-surface-raised: #1f2024;
+    --color-surface-muted: #2a2c31;
+    --color-ink: #e9eaec;
+    --color-ink-muted: #969ba3;
+    --color-accent: #ff6a4d;
+    --color-accent-soft: color-mix(in srgb, #ff6a4d 18%, transparent);
+    --color-border: #34373d;
+    --color-success: #5fbf8f;
+    --color-warn: #d9a441;
+    --color-danger: #f2705a;
+    --color-canvas-bg: #0e0f11;
+    --color-focus: #5b9cff;
+    --color-selection: color-mix(in srgb, #ff6a4d 22%, transparent);
   }
 }
 
 :root {
-  color-scheme: light dark;
   font-family: var(--font-sans);
   color: var(--color-ink);
   background: var(--color-surface);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  letter-spacing: 0.005em;
 }
 
 * {
@@ -57,6 +90,7 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -69,4 +103,14 @@ button {
 
 ::selection {
   background: var(--color-accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

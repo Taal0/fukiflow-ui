@@ -9,14 +9,26 @@ import {
 } from '@/api/queries'
 import { textLayerId } from '@/api/types'
 import { PageCanvas } from '@/canvas/PageCanvas'
-import { BubbleList } from '@/components/BubbleList'
+import { BubblePanel } from '@/components/bubbles/BubblePanel'
+import { ToolOptionsBar } from '@/components/canvas/ToolOptionsBar'
+import { ToolRail } from '@/components/canvas/ToolRail'
+import { ZoomControls } from '@/components/canvas/ZoomControls'
+import { ConflictDialog } from '@/components/ConflictDialog'
 import { MobileWarning } from '@/components/MobileWarning'
-import { OnboardingGuide } from '@/components/OnboardingGuide'
+import {
+  OnboardingGuide,
+  OnboardingTip,
+} from '@/components/OnboardingGuide'
 import { PageGallery } from '@/components/PageGallery'
 import { ShortcutsHelp } from '@/components/ShortcutsHelp'
 import { Toolbar } from '@/components/Toolbar'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Toaster } from '@/components/ui/toaster'
+import { StatusBar } from '@/components/layout/StatusBar'
+import { WorkspaceShell } from '@/components/layout/WorkspaceShell'
 import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
+import { useResizablePanel } from '@/hooks/useResizablePanel'
 import { useWorkspaceKeys } from '@/hooks/useWorkspaceKeys'
 import {
   resolveBubbleFrame,
@@ -24,12 +36,30 @@ import {
 } from '@/lib/bubbleFrame'
 import { buildWorkingDoc } from '@/lib/workingDoc'
 import {
+  applyThemeAttribute,
   bubbleFontsFromEdit,
   disabledLayerIdsFromEdit,
   doneCountFromEdit,
+  GALLERY_WIDTH,
+  PANEL_WIDTH,
   textOverridesFromEdit,
   useSession,
 } from '@/store/session'
+import { toast } from '@/store/toast'
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(query).matches : false,
+  )
+  useEffect(() => {
+    const m = window.matchMedia(query)
+    const onChange = () => setMatches(m.matches)
+    onChange()
+    m.addEventListener('change', onChange)
+    return () => m.removeEventListener('change', onChange)
+  }, [query])
+  return matches
+}
 
 export function WorkspaceView() {
   const chapters = useChapters()
@@ -48,19 +78,48 @@ export function WorkspaceView() {
   const setFrame = useSession((s) => s.setFrame)
   const setBubbleDone = useSession((s) => s.setBubbleDone)
   const setInset = useSession((s) => s.setInset)
-  const setBrushMode = useSession((s) => s.setBrushMode)
-  const setBrushRadius = useSession((s) => s.setBrushRadius)
   const clearPaintForBubble = useSession((s) => s.clearPaintForBubble)
-  const brush = useSession((s) => s.brush)
   const hydrateEdit = useSession((s) => s.hydrateEdit)
   const resetPageLocal = useSession((s) => s.resetPageLocal)
+  const undo = useSession((s) => s.undo)
+  const redo = useSession((s) => s.redo)
+  const theme = useSession((s) => s.ui.theme)
+  const galleryWidth = useSession((s) => s.ui.galleryWidth)
+  const panelWidth = useSession((s) => s.ui.panelWidth)
+  const zoomPercent = useSession((s) => s.ui.zoomPercent)
+  const galleryDrawerOpen = useSession((s) => s.ui.galleryDrawerOpen)
+  const patchUi = useSession((s) => s.patchUi)
   const pageSession = useSession((s) =>
     selectedPageId != null ? s.pages[selectedPageId] : undefined,
   )
   const deleteEdit = useDeletePageEditMutation()
-  const [hideDone, setHideDone] = useState(false)
+  const [guideOpen, setGuideOpen] = useState(false)
 
-  // Auto-select first chapter + first page.
+  const isTablet = useMediaQuery('(max-width: 1023px)')
+  const isDesktop = useMediaQuery('(min-width: 1024px)')
+
+  useEffect(() => {
+    applyThemeAttribute(theme)
+  }, [theme])
+
+  const galleryResize = useResizablePanel({
+    value: galleryWidth,
+    onChange: (w) => patchUi({ galleryWidth: w }),
+    min: GALLERY_WIDTH.min,
+    max: GALLERY_WIDTH.max,
+    defaultValue: GALLERY_WIDTH.default,
+    edge: 'right',
+  })
+
+  const panelResize = useResizablePanel({
+    value: panelWidth,
+    onChange: (w) => patchUi({ panelWidth: w }),
+    min: PANEL_WIDTH.min,
+    max: PANEL_WIDTH.max,
+    defaultValue: PANEL_WIDTH.default,
+    edge: 'left',
+  })
+
   useEffect(() => {
     if (chapterSlug || !chapters.data?.length) return
     setChapterSlug(chapters.data[0]!.slug)
@@ -75,7 +134,6 @@ export function WorkspaceView() {
     selectPage(pagesQ.data[0]!.id)
   }, [pagesQ.data, selectedPageId, selectPage])
 
-  // Hydrate overlay from page payload (single request).
   useEffect(() => {
     if (!pageQ.data || selectedPageId == null) return
     if (pageQ.data.page.id !== selectedPageId) return
@@ -95,6 +153,16 @@ export function WorkspaceView() {
     error: typesetError,
     runTypeset,
   } = useDebouncedTypeset(pageQ.data)
+
+  useEffect(() => {
+    if (typesetError) toast(typesetError, 'danger', 5000)
+  }, [typesetError])
+
+  useEffect(() => {
+    if (pageSession?.saveStatus === 'error' && pageSession.saveError) {
+      toast(pageSession.saveError, 'danger', 5000)
+    }
+  }, [pageSession?.saveStatus, pageSession?.saveError])
 
   const workingDetail = useMemo(() => {
     if (!pageQ.data) return undefined
@@ -137,13 +205,6 @@ export function WorkspaceView() {
   const bubbleFontOverrides = bubbleFontsFromEdit(edit)
   const disabledLayerIds = disabledLayerIdsFromEdit(edit)
 
-  /**
-   * Force-reflow text into the box's current position/size — explicit
-   * "Oto dizgi" action (per bubble or per page). The box already drives
-   * every typeset call (see `buildTypesetBody`); this additionally pins
-   * the resolved font_px/frame onto the overlay so the layout doesn't
-   * silently shift again on the next unrelated edit.
-   */
   const autoTypesetBubbles = (
     bubbleIds: number[],
     frames?: Record<number, [number, number, number, number]>,
@@ -171,7 +232,6 @@ export function WorkspaceView() {
       const fontPx = resolveFontPx(be, layout)
       const frame = frames?.[id] ?? resolveBubbleFrame(bubble, be)
 
-      // Single patch — avoids setFontPx+setFrame churn that fought autosave.
       const patch: {
         font_px?: number
         frame?: [number, number, number, number]
@@ -205,174 +265,276 @@ export function WorkspaceView() {
     try {
       await deleteEdit.mutateAsync(selectedPageId)
       resetPageLocal(selectedPageId)
+      toast('Sayfa sıfırlandı', 'success')
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         resetPageLocal(selectedPageId)
+        toast('Sayfa sıfırlandı', 'success')
         return
       }
-      console.error(err)
+      toast(
+        err instanceof Error ? err.message : 'Sayfa sıfırlanamadı',
+        'danger',
+      )
     }
   }
 
-  return (
-    <div className="relative flex h-full min-h-0 flex-col">
-      <MobileWarning />
-      <OnboardingGuide />
-      <ShortcutsHelp
-        open={shortcutsOpen}
-        onClose={() => setShortcutsOpen(false)}
-      />
-      <Toolbar
-        pageLabel={pageLabel}
-        detail={workingDetail}
-        pages={pagesQ.data}
-        fonts={fontsQ.data ?? []}
-        chapterSlug={chapterSlug}
-        typesetPending={typesetPending}
-        typesetError={typesetError}
-        saveStatus={pageSession?.saveStatus}
-        saveError={pageSession?.saveError}
-        dirty={pageSession?.dirty}
-        visionUnavailable={fontsUnavailable}
-        onResetPage={() => void resetPage()}
-        onAutoTypesetPage={() => {
-          if (!workingDetail) return
-          autoTypesetBubbles(workingDetail.doc.bubbles.map((b) => b.id))
-        }}
-        onRetrySave={() => {
-          if (selectedPageId != null) retrySave(selectedPageId)
-        }}
-        onConflictTakeServer={() => {
-          if (selectedPageId != null) resolveConflictTakeServer(selectedPageId)
-        }}
-        onConflictKeepMine={() => {
-          if (selectedPageId == null) return
-          resolveConflictKeepMine(selectedPageId)
-          // Keep-mine bumps rev then we immediately PUT local content.
-          retrySave(selectedPageId)
-        }}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
-      />
+  const selectedBubble = workingDetail?.doc.bubbles.find(
+    (b) => b.id === pageSession?.selectedBubbleId,
+  )
+  const selectedLabel = selectedBubble
+    ? `Sıra ${selectedBubble.reading_order ?? '—'} · #${selectedBubble.id}`
+    : null
 
-      {(fontsUnavailable || catalogError) && (
-        <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-xs text-[var(--color-ink)]">
-          {catalogError && <span>{catalogError}. </span>}
-          {fontsUnavailable && (
-            <span>
-              Dizgi servisi şu an kapalı (503) — görüntüleme çalışmaya devam
-              ediyor; oto dizgi ve indirme için servisi başlatın. Kayıtlar
-              yerelde bekler.
-            </span>
-          )}
+  const pageProgress =
+    pagesQ.data && pagesQ.data.length
+      ? (() => {
+          const idx = pagesQ.data.findIndex((p) => p.id === selectedPageId)
+          return idx >= 0
+            ? `Sayfa ${idx + 1}/${pagesQ.data.length}`
+            : null
+        })()
+      : null
+
+  const canUndo = Boolean(pageSession?.undoPast.length)
+  const canRedo = Boolean(pageSession?.undoFuture.length)
+
+  const galleryNode = (
+    <>
+      {isDesktop && (
+        <div className="relative flex h-full shrink-0">
+          <PageGallery
+            pages={pagesWithProgress}
+            selectedPageId={selectedPageId}
+            onSelect={selectPage}
+            loading={pagesQ.isLoading || chapters.isLoading}
+            error={catalogError}
+            width={galleryResize.width}
+          />
+          <div
+            {...galleryResize.handleProps}
+            className="absolute right-0 top-0 z-10 h-full w-1.5 translate-x-1/2 cursor-col-resize hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+          />
         </div>
       )}
-
-      <div className="flex min-h-0 flex-1">
+      {isTablet && (
         <PageGallery
           pages={pagesWithProgress}
           selectedPageId={selectedPageId}
           onSelect={selectPage}
           loading={pagesQ.isLoading || chapters.isLoading}
           error={catalogError}
+          width={GALLERY_WIDTH.default}
+          asDrawer
+          drawerOpen={galleryDrawerOpen}
+          onCloseDrawer={() => patchUi({ galleryDrawerOpen: false })}
         />
+      )}
+    </>
+  )
 
-        <main className="relative min-w-0 flex-1">
-          {pageQ.error && !workingDetail && (
-            <div className="flex h-full items-center justify-center p-6 text-center text-sm text-[var(--color-danger)]">
-              {pageQ.error instanceof ApiError
-                ? pageQ.error.message
-                : 'Sayfa açılamadı'}
-            </div>
-          )}
-          {workingDetail && (
-            <PageCanvas detail={workingDetail} fonts={fontsQ.data ?? []} />
-          )}
-          {!pageQ.isPending && !pageQ.error && !workingDetail && (
-            <div className="flex h-full items-center justify-center text-sm text-[var(--color-ink-muted)]">
-              Soldan bir sayfa seçin
-            </div>
-          )}
-          {pageQ.isFetching && workingDetail && (
-            <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-[var(--color-surface-raised)]/90 px-2 py-1 text-[11px] text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
-              Sayfa yükleniyor…
-            </div>
-          )}
-          {pageQ.isPending && !workingDetail && (
-            <div className="flex h-full items-center justify-center text-sm text-[var(--color-ink-muted)]">
-              Sayfa yükleniyor…
-            </div>
-          )}
-        </main>
+  const panelNode = workingDetail ? (
+    <div className="relative flex h-full shrink-0">
+      <div
+        {...panelResize.handleProps}
+        className="absolute left-0 top-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+      />
+      <BubblePanel
+        doc={workingDetail.doc}
+        selectedBubbleId={pageSession?.selectedBubbleId ?? null}
+        disabledLayerIds={disabledLayerIds}
+        layoutsByBubble={pageSession?.layoutsByBubble ?? {}}
+        textOverrides={textOverrides}
+        bubbleFontOverrides={bubbleFontOverrides}
+        bubbleEdits={edit?.bubbles ?? {}}
+        fonts={fontsQ.data ?? []}
+        typesetPending={typesetPending}
+        width={panelResize.width}
+        onSelect={selectBubble}
+        onToggleLayer={(layerId, enabled) => {
+          if (selectedPageId == null) return
+          setLayerEnabled(selectedPageId, layerId, enabled)
+        }}
+        onTextChange={(bubbleId, text) => {
+          if (selectedPageId == null) return
+          setBubbleText(selectedPageId, bubbleId, text)
+        }}
+        onResetText={(bubbleId) => {
+          if (selectedPageId == null) return
+          clearBubbleText(selectedPageId, bubbleId)
+        }}
+        onBubbleFont={(bubbleId, fontKey) => {
+          if (selectedPageId == null) return
+          setBubbleFont(selectedPageId, bubbleId, fontKey)
+        }}
+        onFontPx={(bubbleId, px) => {
+          if (selectedPageId == null) return
+          setFontPx(selectedPageId, bubbleId, px)
+        }}
+        onLeading={(bubbleId, leading) => {
+          if (selectedPageId == null) return
+          setLeading(selectedPageId, bubbleId, leading)
+        }}
+        onAlign={(bubbleId, align) => {
+          if (selectedPageId == null) return
+          setAlign(selectedPageId, bubbleId, align)
+        }}
+        onResetFrame={(bubbleId) => {
+          if (selectedPageId == null) return
+          setFrame(selectedPageId, bubbleId, null)
+          autoTypesetBubbles([bubbleId])
+        }}
+        onAutoTypeset={(bubbleId) => autoTypesetBubbles([bubbleId])}
+        onToggleDone={(bubbleId, done) => {
+          if (selectedPageId == null) return
+          setBubbleDone(selectedPageId, bubbleId, done)
+        }}
+        onInset={(bubbleId, inset) => {
+          if (selectedPageId == null) return
+          setInset(selectedPageId, bubbleId, inset)
+        }}
+      />
+    </div>
+  ) : (
+    <aside
+      style={{ width: panelResize.width }}
+      className="shrink-0 border-l border-[var(--color-border)] bg-[var(--color-surface)]"
+    />
+  )
 
-        {workingDetail ? (
-          <BubbleList
-            doc={workingDetail.doc}
-            selectedBubbleId={pageSession?.selectedBubbleId ?? null}
-            disabledLayerIds={disabledLayerIds}
-            layoutsByBubble={pageSession?.layoutsByBubble ?? {}}
-            textOverrides={textOverrides}
-            bubbleFontOverrides={bubbleFontOverrides}
-            bubbleEdits={edit?.bubbles ?? {}}
+  return (
+    <>
+      <MobileWarning />
+      <Toaster />
+      <OnboardingGuide open={guideOpen} onOpenChange={setGuideOpen} />
+      <ShortcutsHelp
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
+      <ConflictDialog
+        open={pageSession?.saveStatus === 'conflict'}
+        onTakeServer={() => {
+          if (selectedPageId != null) resolveConflictTakeServer(selectedPageId)
+        }}
+        onKeepMine={() => {
+          if (selectedPageId == null) return
+          resolveConflictKeepMine(selectedPageId)
+          retrySave(selectedPageId)
+        }}
+      />
+
+      <WorkspaceShell
+        toolbar={
+          <Toolbar
+            pageLabel={pageLabel}
+            detail={workingDetail}
+            pages={pagesQ.data}
             fonts={fontsQ.data ?? []}
-            brush={brush}
+            chapterSlug={chapterSlug}
             typesetPending={typesetPending}
-            hideDone={hideDone}
-            onHideDoneChange={setHideDone}
-            onSelect={selectBubble}
-            onToggleLayer={(layerId, enabled) => {
-              if (selectedPageId == null) return
-              setLayerEnabled(selectedPageId, layerId, enabled)
+            visionUnavailable={fontsUnavailable}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            showGalleryToggle={isTablet}
+            onToggleGallery={() =>
+              patchUi({ galleryDrawerOpen: !galleryDrawerOpen })
+            }
+            onResetPage={() => void resetPage()}
+            onAutoTypesetPage={() => {
+              if (!workingDetail) return
+              autoTypesetBubbles(workingDetail.doc.bubbles.map((b) => b.id))
             }}
-            onTextChange={(bubbleId, text) => {
-              if (selectedPageId == null) return
-              setBubbleText(selectedPageId, bubbleId, text)
+            onRetrySave={() => {
+              if (selectedPageId != null) retrySave(selectedPageId)
             }}
-            onResetText={(bubbleId) => {
-              if (selectedPageId == null) return
-              clearBubbleText(selectedPageId, bubbleId)
+            onOpenShortcuts={() => setShortcutsOpen(true)}
+            onOpenGuide={() => setGuideOpen(true)}
+            onUndo={() => {
+              if (selectedPageId != null) undo(selectedPageId)
             }}
-            onBubbleFont={(bubbleId, fontKey) => {
-              if (selectedPageId == null) return
-              setBubbleFont(selectedPageId, bubbleId, fontKey)
-            }}
-            onFontPx={(bubbleId, px) => {
-              if (selectedPageId == null) return
-              setFontPx(selectedPageId, bubbleId, px)
-            }}
-            onLeading={(bubbleId, leading) => {
-              if (selectedPageId == null) return
-              setLeading(selectedPageId, bubbleId, leading)
-            }}
-            onAlign={(bubbleId, align) => {
-              if (selectedPageId == null) return
-              setAlign(selectedPageId, bubbleId, align)
-            }}
-            onResetFrame={(bubbleId) => {
-              if (selectedPageId == null) return
-              setFrame(selectedPageId, bubbleId, null)
-              // Recompute the default inscribed box and reflow into it.
-              autoTypesetBubbles([bubbleId])
-            }}
-            onAutoTypeset={(bubbleId) => autoTypesetBubbles([bubbleId])}
-            onToggleDone={(bubbleId, done) => {
-              if (selectedPageId == null) return
-              setBubbleDone(selectedPageId, bubbleId, done)
-            }}
-            onInset={(bubbleId, inset) => {
-              if (selectedPageId == null) return
-              setInset(selectedPageId, bubbleId, inset)
-            }}
-            onBrushMode={setBrushMode}
-            onBrushRadius={setBrushRadius}
-            onClearPaint={(bubbleId) => {
-              if (selectedPageId == null) return
-              clearPaintForBubble(selectedPageId, bubbleId)
+            onRedo={() => {
+              if (selectedPageId != null) redo(selectedPageId)
             }}
           />
-        ) : (
-          <aside className="w-[22rem] shrink-0 border-l border-[var(--color-border)] bg-[var(--color-surface)]" />
-        )}
-      </div>
-    </div>
+        }
+        tip={<OnboardingTip />}
+        banner={
+          (fontsUnavailable || catalogError) && (
+            <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-[length:var(--text-ui)] text-[var(--color-ink)]">
+              {catalogError && <span>{catalogError}. </span>}
+              {fontsUnavailable && (
+                <span>
+                  Dizgi servisi şu an kapalı (503) — görüntüleme çalışmaya devam
+                  ediyor; oto dizgi ve indirme için servisi başlatın. Kayıtlar
+                  yerelde bekler.
+                </span>
+              )}
+            </div>
+          )
+        }
+        gallery={galleryNode}
+        rail={workingDetail ? <ToolRail /> : null}
+        canvas={
+          <>
+            {workingDetail && (
+              <ToolOptionsBar
+                selectedBubbleId={pageSession?.selectedBubbleId ?? null}
+                onClearPaint={(bubbleId) => {
+                  if (selectedPageId == null) return
+                  clearPaintForBubble(selectedPageId, bubbleId)
+                }}
+              />
+            )}
+            <main className="relative min-h-0 flex-1">
+              {pageQ.error && !workingDetail && (
+                <EmptyState
+                  title="Sayfa açılamadı"
+                  description={
+                    pageQ.error instanceof ApiError
+                      ? pageQ.error.message
+                      : 'Sayfa yüklenirken bir hata oluştu.'
+                  }
+                />
+              )}
+              {workingDetail && (
+                <>
+                  <PageCanvas
+                    detail={workingDetail}
+                    fonts={fontsQ.data ?? []}
+                  />
+                  <ZoomControls />
+                </>
+              )}
+              {!pageQ.isPending && !pageQ.error && !workingDetail && (
+                <EmptyState
+                  title="Sayfa seçilmedi"
+                  description="Soldan bir sayfa seçerek düzenlemeye başlayın."
+                />
+              )}
+              {pageQ.isFetching && workingDetail && (
+                <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-[var(--color-surface-raised)]/90 px-2 py-1 text-[length:var(--text-meta)] text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
+                  Sayfa yükleniyor…
+                </div>
+              )}
+              {pageQ.isPending && !workingDetail && (
+                <EmptyState title="Sayfa yükleniyor…" />
+              )}
+            </main>
+          </>
+        }
+        panel={panelNode}
+        status={
+          <StatusBar
+            saveStatus={pageSession?.saveStatus}
+            saveError={pageSession?.saveError}
+            dirty={pageSession?.dirty}
+            zoomPercent={zoomPercent}
+            selectedLabel={selectedLabel}
+            typesetPending={typesetPending}
+            pageProgress={pageProgress}
+          />
+        }
+      />
+    </>
   )
 }

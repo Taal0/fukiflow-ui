@@ -56,6 +56,8 @@ interface SessionState {
   guideDismissed: boolean
   /** Ephemeral brush tool (not persisted in PageEdit). */
   brush: BrushState
+  /** Presentation prefs — survive resetAll. */
+  ui: UiPrefs
 
   setChapterSlug: (slug: string | null) => void
   selectPage: (pageId: number | null) => void
@@ -64,6 +66,12 @@ interface SessionState {
   setBrushMode: (mode: BrushState['mode']) => void
   setBrushRadius: (radiusPx: number) => void
   setBrushColor: (color: [number, number, number] | null) => void
+  setActiveTool: (tool: ActiveTool) => void
+  patchUi: (patch: Partial<UiPrefs>) => void
+  setTheme: (theme: ThemePreference) => void
+  setZoomPercent: (pct: number) => void
+  requestZoom: (kind: 'fit' | '100' | 'set', scale?: number) => void
+  openGuide: () => void
 
   /** Load server overlay into session (no-op if dirty local edits exist). */
   hydrateEdit: (pageId: number, edit: PageEdit | null | undefined, rev?: number) => void
@@ -227,6 +235,47 @@ function withBubblePatch(
 }
 
 const GUIDE_KEY = 'fukiflow.guideDismissed'
+const UI_KEY = 'fukiflow.ui'
+
+export type ThemePreference = 'system' | 'light' | 'dark'
+export type ActiveTool = 'select' | 'frame' | 'paint' | 'restore'
+export type BubbleFilter = 'all' | 'undone' | 'overflow' | 'editor'
+export type ThumbSize = 'sm' | 'lg'
+export type ZoomCommand =
+  | { seq: number; kind: 'fit' }
+  | { seq: number; kind: '100' }
+  | { seq: number; kind: 'set'; scale: number }
+
+export interface UiPrefs {
+  theme: ThemePreference
+  galleryWidth: number
+  panelWidth: number
+  panelListRatio: number
+  bubbleFilter: BubbleFilter
+  bubbleSearch: string
+  activeTool: ActiveTool
+  zoomPercent: number
+  galleryDrawerOpen: boolean
+  thumbSize: ThumbSize
+  zoomCmd: ZoomCommand | null
+}
+
+export const UI_DEFAULTS: UiPrefs = {
+  theme: 'system',
+  galleryWidth: 208,
+  panelWidth: 352,
+  panelListRatio: 0.55,
+  bubbleFilter: 'all',
+  bubbleSearch: '',
+  activeTool: 'select',
+  zoomPercent: 100,
+  galleryDrawerOpen: false,
+  thumbSize: 'sm',
+  zoomCmd: null,
+}
+
+export const GALLERY_WIDTH = { min: 160, max: 360, default: 208 }
+export const PANEL_WIDTH = { min: 300, max: 560, default: 352 }
 
 function readGuideDismissed(): boolean {
   try {
@@ -234,6 +283,88 @@ function readGuideDismissed(): boolean {
   } catch {
     return false
   }
+}
+
+function readUiPrefs(): UiPrefs {
+  try {
+    const raw = localStorage.getItem(UI_KEY)
+    if (!raw) return { ...UI_DEFAULTS }
+    const parsed = JSON.parse(raw) as Partial<UiPrefs>
+    return {
+      ...UI_DEFAULTS,
+      theme: parsed.theme ?? UI_DEFAULTS.theme,
+      galleryWidth: clampNum(
+        parsed.galleryWidth,
+        GALLERY_WIDTH.min,
+        GALLERY_WIDTH.max,
+        GALLERY_WIDTH.default,
+      ),
+      panelWidth: clampNum(
+        parsed.panelWidth,
+        PANEL_WIDTH.min,
+        PANEL_WIDTH.max,
+        PANEL_WIDTH.default,
+      ),
+      panelListRatio: clampNum(parsed.panelListRatio, 0.25, 0.75, 0.55),
+      bubbleFilter: parsed.bubbleFilter ?? UI_DEFAULTS.bubbleFilter,
+      thumbSize: parsed.thumbSize ?? UI_DEFAULTS.thumbSize,
+      // Ephemeral — never hydrate from storage
+      bubbleSearch: '',
+      activeTool: 'select',
+      zoomPercent: 100,
+      galleryDrawerOpen: false,
+      zoomCmd: null,
+    }
+  } catch {
+    return { ...UI_DEFAULTS }
+  }
+}
+
+function persistUi(ui: UiPrefs) {
+  try {
+    localStorage.setItem(
+      UI_KEY,
+      JSON.stringify({
+        theme: ui.theme,
+        galleryWidth: ui.galleryWidth,
+        panelWidth: ui.panelWidth,
+        panelListRatio: ui.panelListRatio,
+        bubbleFilter: ui.bubbleFilter,
+        thumbSize: ui.thumbSize,
+      }),
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+function clampNum(
+  v: number | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (v == null || !Number.isFinite(v)) return fallback
+  return Math.min(max, Math.max(min, v))
+}
+
+/** Resolve system/light/dark → attribute written on <html>. */
+export function applyThemeAttribute(theme: ThemePreference) {
+  const root = document.documentElement
+  if (theme === 'system') root.removeAttribute('data-theme')
+  else root.setAttribute('data-theme', theme)
+}
+
+function toolToBrush(tool: ActiveTool): BrushState['mode'] {
+  if (tool === 'paint') return 'fill'
+  if (tool === 'restore') return 'restore'
+  return 'off'
+}
+
+function brushToTool(mode: BrushState['mode']): ActiveTool {
+  if (mode === 'fill') return 'paint'
+  if (mode === 'restore') return 'restore'
+  return 'select'
 }
 
 type Mutator = (edit: PageEdit) => PageEdit
@@ -299,6 +430,7 @@ export const useSession = create<SessionState>((set, get) => ({
   pages: {},
   guideDismissed: readGuideDismissed(),
   brush: { ...DEFAULT_BRUSH },
+  ui: readUiPrefs(),
 
   setChapterSlug: (slug) => set({ chapterSlug: slug }),
 
@@ -319,7 +451,10 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 
   setBrushMode: (mode) =>
-    set((s) => ({ brush: { ...s.brush, mode } })),
+    set((s) => {
+      const ui = { ...s.ui, activeTool: brushToTool(mode) }
+      return { brush: { ...s.brush, mode }, ui }
+    }),
   setBrushRadius: (radiusPx) =>
     set((s) => ({
       brush: {
@@ -329,6 +464,54 @@ export const useSession = create<SessionState>((set, get) => ({
     })),
   setBrushColor: (color) =>
     set((s) => ({ brush: { ...s.brush, color } })),
+
+  setActiveTool: (tool) =>
+    set((s) => {
+      const ui = { ...s.ui, activeTool: tool }
+      return {
+        ui,
+        brush: { ...s.brush, mode: toolToBrush(tool) },
+      }
+    }),
+
+  patchUi: (patch) =>
+    set((s) => {
+      const ui = { ...s.ui, ...patch }
+      persistUi(ui)
+      return { ui }
+    }),
+
+  setTheme: (theme) =>
+    set((s) => {
+      const ui = { ...s.ui, theme }
+      persistUi(ui)
+      applyThemeAttribute(theme)
+      return { ui }
+    }),
+
+  setZoomPercent: (pct) =>
+    set((s) => ({
+      ui: { ...s.ui, zoomPercent: Math.round(pct) },
+    })),
+
+  requestZoom: (kind, scale) =>
+    set((s) => {
+      const seq = (s.ui.zoomCmd?.seq ?? 0) + 1
+      const zoomCmd: ZoomCommand =
+        kind === 'set'
+          ? { seq, kind: 'set', scale: scale ?? 1 }
+          : { seq, kind }
+      return { ui: { ...s.ui, zoomCmd } }
+    }),
+
+  openGuide: () => {
+    try {
+      localStorage.removeItem(GUIDE_KEY)
+    } catch {
+      /* ignore */
+    }
+    set({ guideDismissed: false })
+  },
 
   hydrateEdit: (pageId, edit, rev) => {
     set((s) => {
@@ -854,12 +1037,20 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 
   resetAll: () =>
-    set({
+    set((s) => ({
       pages: {},
       viewMode: 'composed',
       splitRatio: 0.5,
       brush: { ...DEFAULT_BRUSH },
-    }),
+      // Keep ui prefs (theme, panel widths, filters).
+      ui: {
+        ...s.ui,
+        activeTool: 'select',
+        zoomPercent: 100,
+        zoomCmd: null,
+        galleryDrawerOpen: false,
+      },
+    })),
 
   dismissGuide: () => {
     try {

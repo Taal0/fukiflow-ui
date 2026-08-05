@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react'
+import { LayoutGrid, List } from 'lucide-react'
 import type { PageSummary } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
+import { EmptyState } from '@/components/ui/empty-state'
 import { statusLabel } from '@/components/flags'
+import { useSession } from '@/store/session'
 import { cn } from '@/lib/utils'
 
 interface PageGalleryProps {
@@ -10,6 +13,11 @@ interface PageGalleryProps {
   onSelect: (pageId: number) => void
   loading?: boolean
   error?: string | null
+  width: number
+  /** Tablet: render as overlay drawer. */
+  asDrawer?: boolean
+  drawerOpen?: boolean
+  onCloseDrawer?: () => void
 }
 
 export function PageGallery({
@@ -18,8 +26,14 @@ export function PageGallery({
   onSelect,
   loading,
   error,
+  width,
+  asDrawer,
+  drawerOpen,
+  onCloseDrawer,
 }: PageGalleryProps) {
   const listRef = useRef<HTMLDivElement>(null)
+  const thumbSize = useSession((s) => s.ui.thumbSize)
+  const patchUi = useSession((s) => s.patchUi)
 
   useEffect(() => {
     const el = listRef.current
@@ -46,44 +60,156 @@ export function PageGallery({
     node?.scrollIntoView({ block: 'nearest' })
   }, [selectedPageId])
 
-  return (
-    <aside className="flex h-full w-52 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
-      <div className="border-b border-[var(--color-border)] px-3 py-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
-          Sayfalar
-        </h2>
-        <p className="text-[11px] text-[var(--color-ink-muted)]">
-          {pages.length ? `${pages.length} sayfa` : '—'}
-        </p>
+  const body = (
+    <aside
+      style={{ width: asDrawer ? undefined : width }}
+      className={cn(
+        'flex h-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]',
+        asDrawer && 'w-56 shadow-lg',
+      )}
+    >
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
+        <div>
+          <h2 className="text-[length:var(--text-ui)] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+            Sayfalar
+          </h2>
+          <p className="text-[length:var(--text-meta)] text-[var(--color-ink-muted)]">
+            {pages.length ? `${pages.length} sayfa` : '—'}
+          </p>
+        </div>
+        <div className="flex gap-0.5" role="group" aria-label="Görünüm">
+          {(
+            [
+              { id: 'sm', label: 'Liste', Icon: List },
+              { id: 'lg', label: 'Büyük önizleme', Icon: LayoutGrid },
+            ] as const
+          ).map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              title={label}
+              aria-label={label}
+              aria-pressed={thumbSize === id}
+              onClick={() => patchUi({ thumbSize: id })}
+              className={cn(
+                'flex h-6 w-6 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
+                thumbSize === id
+                  ? 'bg-[var(--color-accent)] text-white'
+                  : 'text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+            </button>
+          ))}
+        </div>
       </div>
       <div
         ref={listRef}
         tabIndex={0}
-        className="flex-1 overflow-y-auto p-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]"
+        className="flex-1 overflow-y-auto p-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus)]"
       >
         {loading && (
-          <p className="px-1 py-2 text-xs text-[var(--color-ink-muted)]">
-            Yükleniyor…
-          </p>
+          <ul className="flex flex-col gap-1">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <li
+                key={i}
+                className="animate-pulse rounded-md bg-[var(--color-surface-muted)]"
+                style={{ height: thumbSize === 'lg' ? 140 : 36 }}
+              />
+            ))}
+          </ul>
         )}
         {error && (
-          <p className="px-1 py-2 text-xs text-[var(--color-danger)]">{error}</p>
+          <p className="px-1 py-2 text-[length:var(--text-ui)] text-[var(--color-danger)]">
+            {error}
+          </p>
         )}
-        <ul className="flex flex-col gap-1.5">
+        {!loading && !error && pages.length === 0 && (
+          <EmptyState
+            title="Sayfa yok"
+            description="Bu bölümde henüz sayfa bulunmuyor."
+            className="py-6"
+          />
+        )}
+        <ul
+          className={cn(
+            'flex flex-col',
+            thumbSize === 'lg' ? 'gap-1.5' : 'gap-0.5',
+          )}
+        >
           {pages.map((page) => {
             const clean = statusLabel(page.clean_status)
             const typeset = statusLabel(page.typeset_status)
             const selected = page.id === selectedPageId
+            const progress =
+              page.bubble_count > 0
+                ? (page.done_count ?? 0) / page.bubble_count
+                : 0
+            const label = page.stem || `Sayfa ${page.page_no}`
+
+            if (thumbSize === 'sm') {
+              return (
+                <li key={page.id}>
+                  <button
+                    type="button"
+                    data-selected={selected || undefined}
+                    onClick={() => {
+                      onSelect(page.id)
+                      onCloseDrawer?.()
+                    }}
+                    className={cn(
+                      'flex h-9 w-full items-center gap-2 rounded-md px-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
+                      selected
+                        ? 'bg-[var(--color-selection)] ring-1 ring-[var(--color-accent)]'
+                        : 'hover:bg-[var(--color-surface-muted)]',
+                    )}
+                  >
+                    <span className="relative h-7 w-5 shrink-0 overflow-hidden rounded bg-[var(--color-surface-muted)]">
+                      {page.thumb_url ? (
+                        <img
+                          src={page.thumb_url}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span className="flex h-full items-center justify-center text-[9px] tabular-nums text-[var(--color-ink-muted)]">
+                          {page.page_no}
+                        </span>
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[length:var(--text-ui)] text-[var(--color-ink)]">
+                      {label}
+                    </span>
+                    {page.bubble_count > 0 && (
+                      <span
+                        className="h-1 w-8 shrink-0 overflow-hidden rounded-full bg-[var(--color-surface-muted)]"
+                        title={`${page.done_count ?? 0}/${page.bubble_count}`}
+                      >
+                        <span
+                          className="block h-full bg-[var(--color-success)]"
+                          style={{ width: `${Math.round(progress * 100)}%` }}
+                        />
+                      </span>
+                    )}
+                  </button>
+                </li>
+              )
+            }
+
             return (
               <li key={page.id}>
                 <button
                   type="button"
                   data-selected={selected || undefined}
-                  onClick={() => onSelect(page.id)}
+                  onClick={() => {
+                    onSelect(page.id)
+                    onCloseDrawer?.()
+                  }}
                   className={cn(
-                    'flex w-full flex-col gap-1.5 rounded-md border p-1.5 text-left transition-colors',
+                    'flex w-full flex-col gap-1 rounded-md border p-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
                     selected
-                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                      ? 'border-[var(--color-accent)] bg-[var(--color-selection)]'
                       : 'border-transparent hover:bg-[var(--color-surface-muted)]',
                   )}
                 >
@@ -100,20 +226,30 @@ export function PageGallery({
                         {page.page_no}
                       </div>
                     )}
-                    <span className="absolute left-1 top-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                    <span className="absolute left-1 top-1 rounded bg-black/55 px-1.5 py-0.5 text-[length:var(--text-meta)] font-medium text-white">
                       {page.page_no}
                     </span>
-                    {page.bubble_count > 0 && (
-                      <span className="absolute bottom-1 right-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white">
-                        {page.done_count ?? 0}/{page.bubble_count}
-                      </span>
-                    )}
                   </div>
+                  {page.bubble_count > 0 && (
+                    <div
+                      className="h-1 w-full overflow-hidden rounded-full bg-[var(--color-surface-muted)]"
+                      title={`${page.done_count ?? 0}/${page.bubble_count}`}
+                    >
+                      <div
+                        className="h-full bg-[var(--color-success)] transition-[width]"
+                        style={{ width: `${Math.round(progress * 100)}%` }}
+                      />
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-1">
-                    <Badge variant={clean.variant}>clean: {clean.text}</Badge>
-                    <Badge variant={typeset.variant}>
-                      dizgi: {typeset.text}
-                    </Badge>
+                    {page.clean_status !== 'ok' && (
+                      <Badge variant={clean.variant}>clean: {clean.text}</Badge>
+                    )}
+                    {page.typeset_status !== 'ok' && (
+                      <Badge variant={typeset.variant}>
+                        dizgi: {typeset.text}
+                      </Badge>
+                    )}
                   </div>
                 </button>
               </li>
@@ -122,5 +258,21 @@ export function PageGallery({
         </ul>
       </div>
     </aside>
+  )
+
+  if (!asDrawer) return body
+
+  if (!drawerOpen) return null
+
+  return (
+    <div className="absolute inset-0 z-30 flex lg:static">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40 lg:hidden"
+        aria-label="Galeriyi kapat"
+        onClick={onCloseDrawer}
+      />
+      <div className="relative z-10 h-full">{body}</div>
+    </div>
   )
 }

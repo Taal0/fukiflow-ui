@@ -40,11 +40,13 @@ export const WORKSPACE_SHORTCUTS: ReadonlyArray<{
   { group: 'Balon', keys: 'T', label: 'Metin katmanı aç/kapa' },
   { group: 'Kutu', keys: '←↑↓→', label: 'Kutuyu 1 px kaydır' },
   { group: 'Kutu', keys: '⇧ + ok', label: 'Kutuyu 10 px kaydır' },
+  { group: 'Araçlar', keys: 'V', label: 'Seç' },
+  { group: 'Araçlar', keys: 'M', label: 'Kutu' },
   { group: 'Fırça', keys: 'B', label: 'Boya fırçası' },
   { group: 'Fırça', keys: 'R', label: 'Geri al fırçası' },
   { group: 'Fırça', keys: '[ ]', label: 'Fırça boyutu −/+' },
   { group: 'Fırça', keys: '⇧[ ⇧]', label: 'Fırça boyutu ±4' },
-  { group: 'Genel', keys: 'Esc', label: 'Fırçayı kapat / seçimi kaldır' },
+  { group: 'Genel', keys: 'Esc', label: 'Aracı kapat / seçimi kaldır' },
   { group: 'Genel', keys: '?', label: 'Kısayollar paneli' },
 ]
 
@@ -59,7 +61,9 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const setFrame = useSession((s) => s.setFrame)
   const setBrushMode = useSession((s) => s.setBrushMode)
   const setBrushRadius = useSession((s) => s.setBrushRadius)
+  const setActiveTool = useSession((s) => s.setActiveTool)
   const brush = useSession((s) => s.brush)
+  const activeTool = useSession((s) => s.ui.activeTool)
   const undo = useSession((s) => s.undo)
   const redo = useSession((s) => s.redo)
   const pageSession = useSession((s) =>
@@ -140,15 +144,25 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
         return
       }
 
-      // Brush tool
+      // Tools
+      if (e.key === 'v' || e.key === 'V') {
+        e.preventDefault()
+        setActiveTool('select')
+        return
+      }
+      if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault()
+        setActiveTool('frame')
+        return
+      }
       if (e.key === 'b' || e.key === 'B') {
         e.preventDefault()
-        setBrushMode(brush.mode === 'fill' ? 'off' : 'fill')
+        setActiveTool(activeTool === 'paint' ? 'select' : 'paint')
         return
       }
       if (e.key === 'r' || e.key === 'R') {
         e.preventDefault()
-        setBrushMode(brush.mode === 'restore' ? 'off' : 'restore')
+        setActiveTool(activeTool === 'restore' ? 'select' : 'restore')
         return
       }
       if (e.key === '[' || e.key === ']') {
@@ -232,8 +246,8 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
 
       // Escape clears brush tool first, then bubble selection
       if (e.key === 'Escape') {
-        if (brush.mode !== 'off') {
-          setBrushMode('off')
+        if (brush.mode !== 'off' || activeTool === 'frame') {
+          setActiveTool('select')
           return
         }
         selectBubble(null)
@@ -251,6 +265,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     pageSession?.edit,
     brush.mode,
     brush.radiusPx,
+    activeTool,
     shortcutsOpen,
     selectPage,
     selectBubble,
@@ -260,6 +275,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     setFrame,
     setBrushMode,
     setBrushRadius,
+    setActiveTool,
     undo,
     redo,
   ])

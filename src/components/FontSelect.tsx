@@ -40,7 +40,7 @@ export function FontSelect({
         onChange(v ? v : null)
       }}
       className={cn(
-        'h-8 max-w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-xs text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+        'h-8 max-w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-[length:var(--text-ui)] text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
         className,
       )}
       style={family ? { fontFamily: `"${family}", sans-serif` } : undefined}

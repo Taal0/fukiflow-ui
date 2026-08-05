@@ -14,7 +14,7 @@ export function LayerRow({
   disabled,
 }: LayerRowProps) {
   return (
-    <label className="flex items-center justify-between gap-2 text-[11px] text-[var(--color-ink-muted)]">
+    <label className="flex items-center justify-between gap-2 text-[length:var(--text-ui)] text-[var(--color-ink-muted)]">
       <span>{label}</span>
       <Switch
         checked={checked}
