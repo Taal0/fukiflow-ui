@@ -38,7 +38,7 @@ export function DropdownMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       className={cn(
-        'relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-[length:var(--text-ui)] outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-[var(--color-surface-muted)]',
+        'relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-[length:var(--text-ui)] outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-[var(--color-surface-muted)]',
         danger
           ? 'text-[var(--color-danger)]'
           : 'text-[var(--color-ink)]',

@@ -1,5 +1,22 @@
 import { useState } from 'react'
-import { MoreHorizontal, Undo2, Redo2, PanelLeft } from 'lucide-react'
+import {
+  MoreHorizontal,
+  Undo2,
+  Redo2,
+  PanelLeft,
+  Download,
+  FileImage,
+  FileArchive,
+  RotateCcw,
+  Trash2,
+  Keyboard,
+  CircleHelp,
+  RefreshCw,
+  Sun,
+  Moon,
+  Monitor,
+  Type,
+} from 'lucide-react'
 import { ApiError, api, triggerDownload } from '@/api/client'
 import type { FontInfo, PageDetail, PageSummary } from '@/api/types'
 import { BrandMark } from '@/components/BrandMark'
@@ -12,8 +29,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -28,6 +43,17 @@ import {
   useSession,
 } from '@/store/session'
 import { toast, dismissToast, updateToast } from '@/store/toast'
+import { cn } from '@/lib/utils'
+
+const THEME_OPTIONS: {
+  id: ThemePreference
+  label: string
+  Icon: typeof Sun
+}[] = [
+  { id: 'light', label: 'Açık', Icon: Sun },
+  { id: 'dark', label: 'Koyu', Icon: Moon },
+  { id: 'system', label: 'Sistem', Icon: Monitor },
+]
 
 interface ToolbarProps {
   pageLabel?: string
@@ -211,7 +237,9 @@ export function Toolbar({
                 ? 'Dizgi servisi kapalı'
                 : 'Sayfadaki tüm balonları yeniden diz'
             }
+            className="gap-1.5"
           >
+            <Type className="h-3.5 w-3.5" aria-hidden />
             Oto dizgi
           </Button>
         </div>
@@ -228,7 +256,9 @@ export function Toolbar({
                     ? 'Dizgi servisi kapalı; indirme yapılamıyor'
                     : undefined
                 }
+                className="gap-1.5"
               >
+                <Download className="h-3.5 w-3.5" aria-hidden />
                 İndir
               </Button>
             </DropdownMenuTrigger>
@@ -237,12 +267,14 @@ export function Toolbar({
                 disabled={!detail || busy != null}
                 onSelect={() => void downloadPage()}
               >
+                <FileImage className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
                 Sayfa PNG
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={!chapterSlug || !pages.length || busy != null}
                 onSelect={() => void downloadChapter()}
               >
+                <FileArchive className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
                 Bölüm ZIP
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -259,11 +291,12 @@ export function Toolbar({
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="min-w-[12rem]">
               <DropdownMenuItem
                 disabled={!detail}
                 onSelect={() => setConfirmPage(true)}
               >
+                <RotateCcw className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
                 Sayfa sıfırla
               </DropdownMenuItem>
               <DropdownMenuItem
@@ -273,32 +306,56 @@ export function Toolbar({
                   setConfirmSession(true)
                 }}
               >
+                <Trash2 className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
                 Oturum sıfırla
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => onOpenShortcuts?.()}>
+                <Keyboard className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
                 Kısayollar
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onOpenGuide?.()}>
+                <CircleHelp className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
                 Nasıl çalışır
               </DropdownMenuItem>
               {onRetrySave && (
                 <DropdownMenuItem onSelect={() => onRetrySave()}>
+                  <RefreshCw className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
                   Tekrar kaydet
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuLabel>Tema</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={theme}
-                onValueChange={(v) => setTheme(v as ThemePreference)}
+              <DropdownMenuLabel className="flex items-center gap-1.5">
+                Tema
+              </DropdownMenuLabel>
+              <div
+                role="group"
+                aria-label="Tema"
+                className="flex items-center justify-stretch gap-1 px-2 pb-1.5"
+                onPointerDown={(e) => e.preventDefault()}
               >
-                <DropdownMenuRadioItem value="system">
-                  Sistem
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="light">Açık</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="dark">Koyu</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
+                {THEME_OPTIONS.map(({ id, label, Icon }) => {
+                  const on = theme === id
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      title={label}
+                      aria-label={label}
+                      aria-pressed={on}
+                      onClick={() => setTheme(id)}
+                      className={cn(
+                        'flex h-8 flex-1 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
+                        on
+                          ? 'bg-[var(--color-accent)] text-white'
+                          : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
+                      )}
+                    >
+                      <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                    </button>
+                  )
+                })}
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
