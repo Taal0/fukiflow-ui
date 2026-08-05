@@ -1,15 +1,26 @@
 import { create } from 'zustand'
 import type {
+  BBox,
   BrushState,
   BubbleEdit,
   BubbleLayout,
   Layer,
   PageEdit,
   PaintStroke,
+  Region,
   SaveStatus,
   ViewMode,
 } from '@/api/types'
 import { BRUSH_PRESETS } from '@/lib/paintStroke'
+
+function newRegionId(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  let suffix = ''
+  for (let i = 0; i < 6; i++) {
+    suffix += alphabet[Math.floor(Math.random() * alphabet.length)]!
+  }
+  return `r-${suffix}`
+}
 
 const UNDO_CAP = 50
 /** Consecutive same-key edits (e.g. keystrokes in one bubble) within this
@@ -24,6 +35,8 @@ export const DEFAULT_BRUSH: BrushState = {
 
 export interface PageSession {
   selectedBubbleId: number | null
+  /** Translator manual box selection — mutually exclusive with bubble. */
+  selectedRegionId: string | null
   /** Working overlay (matches server PageEdit shape). */
   edit: PageEdit
   /** True when local edit differs from last hydrated/saved snapshot. */
@@ -62,6 +75,7 @@ interface SessionState {
   setChapterSlug: (slug: string | null) => void
   selectPage: (pageId: number | null) => void
   selectBubble: (bubbleId: number | null) => void
+  selectRegion: (regionId: string | null) => void
 
   setBrushMode: (mode: BrushState['mode']) => void
   setBrushRadius: (radiusPx: number) => void
@@ -110,6 +124,13 @@ interface SessionState {
   setBubbleDone: (pageId: number, bubbleId: number, done: boolean) => void
   toggleBubbleDone: (pageId: number, bubbleId: number) => void
 
+  addRegion: (pageId: number, bbox: BBox, text?: string) => string
+  updateRegionBbox: (pageId: number, regionId: string, bbox: BBox) => void
+  setRegionText: (pageId: number, regionId: string, text: string) => void
+  deleteRegion: (pageId: number, regionId: string) => void
+  moveOrder: (pageId: number, fromIndex: number, toIndex: number) => void
+  reorder: (pageId: number, tokens: string[]) => void
+
   setLayouts: (pageId: number, layouts: BubbleLayout[]) => void
   applyTypeset: (
     pageId: number,
@@ -142,12 +163,13 @@ interface SessionState {
 }
 
 export function emptyEdit(rev = 0): PageEdit {
-  return { rev, page: {}, bubbles: {}, paint: [] }
+  return { rev, page: {}, bubbles: {}, paint: [], regions: [], order: [] }
 }
 
 function emptyPage(): PageSession {
   return {
     selectedBubbleId: null,
+    selectedRegionId: null,
     edit: emptyEdit(0),
     dirty: false,
     saveStatus: 'idle',
@@ -179,6 +201,8 @@ function stableEditCore(edit: PageEdit): string {
     page: edit.page ?? {},
     bubbles: edit.bubbles ?? {},
     paint: edit.paint ?? [],
+    regions: edit.regions ?? [],
+    order: edit.order ?? [],
   }
   return JSON.stringify(core, (_key, v) => {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
@@ -238,7 +262,7 @@ const GUIDE_KEY = 'fukiflow.guideDismissed'
 const UI_KEY = 'fukiflow.ui'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
-export type ActiveTool = 'select' | 'frame' | 'paint' | 'restore'
+export type ActiveTool = 'select' | 'frame' | 'paint' | 'restore' | 'region'
 export type BubbleFilter = 'all' | 'undone' | 'overflow' | 'editor'
 export type ThumbSize = 'sm' | 'lg'
 export type ZoomCommand =
@@ -444,7 +468,29 @@ export const useSession = create<SessionState>((set, get) => ({
       return {
         pages: {
           ...s.pages,
-          [pageId]: { ...cur, selectedBubbleId: bubbleId },
+          [pageId]: {
+            ...cur,
+            selectedBubbleId: bubbleId,
+            selectedRegionId: bubbleId != null ? null : cur.selectedRegionId,
+          },
+        },
+      }
+    })
+  },
+
+  selectRegion: (regionId) => {
+    const pageId = get().selectedPageId
+    if (pageId == null) return
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            selectedRegionId: regionId,
+            selectedBubbleId: regionId != null ? null : cur.selectedBubbleId,
+          },
         },
       }
     })
@@ -520,6 +566,9 @@ export const useSession = create<SessionState>((set, get) => ({
       if (cur.dirty) return {}
       const next = edit ? cloneEdit(edit) : emptyEdit(rev ?? 0)
       if (rev != null) next.rev = rev
+      next.regions = next.regions ?? []
+      next.order = next.order ?? []
+      next.paint = next.paint ?? []
       return {
         pages: {
           ...s.pages,
@@ -773,6 +822,120 @@ export const useSession = create<SessionState>((set, get) => ({
         ),
       }
     })
+  },
+
+  addRegion: (pageId, bbox, text = '') => {
+    const id = newRegionId()
+    const region: Region = {
+      id,
+      bbox,
+      text,
+      status: 'unclassified',
+      confidence: null,
+    }
+    set((s) => {
+      const pages = applyEditMutation(s.pages, pageId, (edit) => {
+        const regions = [...(edit.regions ?? []), region]
+        const order = [...(edit.order ?? [])]
+        if (!order.includes(id)) order.push(id)
+        return { ...edit, regions, order }
+      })
+      const next = ensurePage(pages, pageId)
+      return {
+        pages: {
+          ...pages,
+          [pageId]: {
+            ...next,
+            selectedRegionId: id,
+            selectedBubbleId: null,
+          },
+        },
+      }
+    })
+    return id
+  },
+
+  updateRegionBbox: (pageId, regionId, bbox) => {
+    set((s) => ({
+      pages: applyEditMutation(
+        s.pages,
+        pageId,
+        (edit) => ({
+          ...edit,
+          regions: (edit.regions ?? []).map((r) =>
+            r.id === regionId ? { ...r, bbox } : r,
+          ),
+        }),
+        { coalesceKey: `region-bbox:${regionId}` },
+      ),
+    }))
+  },
+
+  setRegionText: (pageId, regionId, text) => {
+    set((s) => ({
+      pages: applyEditMutation(
+        s.pages,
+        pageId,
+        (edit) => ({
+          ...edit,
+          regions: (edit.regions ?? []).map((r) =>
+            r.id === regionId ? { ...r, text } : r,
+          ),
+        }),
+        { coalesceKey: `region-text:${regionId}` },
+      ),
+    }))
+  },
+
+  deleteRegion: (pageId, regionId) => {
+    set((s) => {
+      const pages = applyEditMutation(s.pages, pageId, (edit) => ({
+        ...edit,
+        regions: (edit.regions ?? []).filter((r) => r.id !== regionId),
+        order: (edit.order ?? []).filter((t) => t !== regionId),
+      }))
+      const cur = ensurePage(pages, pageId)
+      return {
+        pages: {
+          ...pages,
+          [pageId]: {
+            ...cur,
+            selectedRegionId:
+              cur.selectedRegionId === regionId ? null : cur.selectedRegionId,
+          },
+        },
+      }
+    })
+  },
+
+  moveOrder: (pageId, fromIndex, toIndex) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => {
+        const order = [...(edit.order ?? [])]
+        if (
+          fromIndex < 0 ||
+          toIndex < 0 ||
+          fromIndex >= order.length ||
+          toIndex >= order.length ||
+          fromIndex === toIndex
+        ) {
+          return edit
+        }
+        const [item] = order.splice(fromIndex, 1)
+        if (item == null) return edit
+        order.splice(toIndex, 0, item)
+        return { ...edit, order }
+      }),
+    }))
+  },
+
+  reorder: (pageId, tokens) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => ({
+        ...edit,
+        order: [...tokens],
+      })),
+    }))
   },
 
   setLayouts: (pageId, layouts) => {
@@ -1117,6 +1280,18 @@ export function disabledLayerIdsFromEdit(
 export function doneCountFromEdit(edit: PageEdit | undefined): number {
   if (!edit) return 0
   return Object.values(edit.bubbles).filter((b) => b.done).length
+}
+
+export function translatedCountFromEdit(edit: PageEdit | undefined): number {
+  if (!edit) return 0
+  let n = 0
+  for (const be of Object.values(edit.bubbles)) {
+    if (typeof be.text === 'string' && be.text.trim()) n += 1
+  }
+  for (const r of edit.regions ?? []) {
+    if (typeof r.text === 'string' && r.text.trim()) n += 1
+  }
+  return n
 }
 
 export function pageFontFromEdit(edit: PageEdit | undefined): string | null {

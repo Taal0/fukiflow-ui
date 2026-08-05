@@ -8,6 +8,8 @@ interface StatusBarProps {
   zoomPercent: number
   selectedLabel?: string | null
   typesetPending?: boolean
+  /** Hide the typeset status segment (translator view). */
+  hideTypeset?: boolean
   pageProgress?: string | null
 }
 
@@ -38,6 +40,7 @@ export function StatusBar({
   zoomPercent,
   selectedLabel,
   typesetPending,
+  hideTypeset,
   pageProgress,
 }: StatusBarProps) {
   return (
@@ -67,11 +70,15 @@ export function StatusBar({
       <span className="text-[var(--color-border)]" aria-hidden>
         |
       </span>
-      <span className="truncate">{selectedLabel ?? 'Balon seçilmedi'}</span>
-      <span className="text-[var(--color-border)]" aria-hidden>
-        |
-      </span>
-      <span>{typesetPending ? 'Dizgi…' : 'Dizgi hazır'}</span>
+      <span className="truncate">{selectedLabel ?? 'Öğe seçilmedi'}</span>
+      {!hideTypeset && (
+        <>
+          <span className="text-[var(--color-border)]" aria-hidden>
+            |
+          </span>
+          <span>{typesetPending ? 'Dizgi…' : 'Dizgi hazır'}</span>
+        </>
+      )}
       {pageProgress && (
         <>
           <span className="text-[var(--color-border)]" aria-hidden>

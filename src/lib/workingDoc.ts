@@ -6,6 +6,7 @@ import type {
   PageDetail,
   PageEdit,
   PaintStroke,
+  Region,
 } from '@/api/types'
 import type { PageSession } from '@/store/session'
 import {
@@ -20,12 +21,106 @@ import { resolveBubbleFrame } from '@/lib/bubbleFrame'
 import { paintLayerId } from '@/api/types'
 
 const PAINT_Z_BASE = 150
+const ORDER_BUBBLE_RE = /^b:(\d+)$/
+const REGION_ID_RE = /^r-[A-Za-z0-9_-]{2,32}$/
+
+export type OrderedItem =
+  | { kind: 'bubble'; id: string }
+  | { kind: 'region'; id: string }
 
 /** Minimal session fields needed to build a compose/working doc. */
 export type WorkingSessionBits = {
   edit?: PageEdit
   textLayers?: Layer[] | null
   layoutsByBubble?: Record<number, BubbleLayout>
+}
+
+/**
+ * Unified reading-order items (parity with server ``ordered_items``).
+ * Tokens in ``edit.order`` first; remaining seed bubbles by reading_order;
+ * remaining regions in array order.
+ */
+export function orderedItems(
+  doc: PageDoc,
+  edit: PageEdit | null | undefined,
+): OrderedItem[] {
+  const regions = edit?.regions ?? []
+  const regionIds = new Set(regions.map((r) => r.id))
+  const bubbleIds = new Set(doc.bubbles.map((b) => b.id))
+
+  const items: OrderedItem[] = []
+  const seenBubbles = new Set<number>()
+  const seenRegions = new Set<string>()
+
+  for (const token of edit?.order ?? []) {
+    const m = ORDER_BUBBLE_RE.exec(token)
+    if (m) {
+      const bid = Number(m[1])
+      if (bubbleIds.has(bid) && !seenBubbles.has(bid)) {
+        seenBubbles.add(bid)
+        items.push({ kind: 'bubble', id: String(bid) })
+      }
+      continue
+    }
+    if (REGION_ID_RE.test(token) && regionIds.has(token) && !seenRegions.has(token)) {
+      seenRegions.add(token)
+      items.push({ kind: 'region', id: token })
+    }
+  }
+
+  const remaining = doc.bubbles
+    .filter((b) => !seenBubbles.has(b.id))
+    .slice()
+    .sort((a, b) => {
+      const ra = a.reading_order
+      const rb = b.reading_order
+      if (ra == null && rb == null) return a.id - b.id
+      if (ra == null) return 1
+      if (rb == null) return -1
+      return ra - rb || a.id - b.id
+    })
+  for (const b of remaining) {
+    items.push({ kind: 'bubble', id: String(b.id) })
+  }
+
+  for (const r of regions) {
+    if (!seenRegions.has(r.id)) {
+      seenRegions.add(r.id)
+      items.push({ kind: 'region', id: r.id })
+    }
+  }
+
+  return items
+}
+
+/**
+ * Renumber bubble ``reading_order`` from the unified list (1..N).
+ * Regions occupy slots but are not injected into the PageDoc.
+ * No-op when both ``order`` and ``regions`` are empty (legacy overlays).
+ */
+export function applyReadingOrder(
+  doc: PageDoc,
+  edit: PageEdit | null | undefined,
+): PageDoc {
+  if (!edit) return doc
+  const hasOrder = (edit.order?.length ?? 0) > 0
+  const hasRegions = (edit.regions?.length ?? 0) > 0
+  if (!hasOrder && !hasRegions) return doc
+
+  const items = orderedItems(doc, edit)
+  const bubblePos = new Map<number, number>()
+  items.forEach((item, i) => {
+    if (item.kind === 'bubble') bubblePos.set(Number(item.id), i + 1)
+  })
+
+  return {
+    ...doc,
+    bubbles: doc.bubbles.map((b) => {
+      const ro = bubblePos.get(b.id)
+      if (ro == null) return b
+      return { ...b, reading_order: ro, order_source: 'manual' }
+    }),
+  }
 }
 
 /** Merge session typeset + paint/inset overlays into the seed PageDoc. */
@@ -56,7 +151,8 @@ export function buildWorkingDoc(
     }
   }
 
-  return applyEditLayers(doc, session?.edit)
+  doc = applyEditLayers(doc, session?.edit)
+  return applyReadingOrder(doc, session?.edit)
 }
 
 /** True when overlay fields require a typeset pass (not paint/inset alone). */
@@ -111,6 +207,8 @@ export async function buildComposePayloadForPage(
           page: {},
           bubbles: {},
           paint: [],
+          regions: [],
+          order: [],
         })
 
   let textLayers = session?.hydrated ? session.textLayers : null
@@ -309,5 +407,27 @@ export function editPayload(edit: PageEdit): PageEdit {
     page: edit.page ?? {},
     bubbles: edit.bubbles ?? {},
     paint: edit.paint ?? [],
+    regions: edit.regions ?? [],
+    order: edit.order ?? [],
   }
+}
+
+export function newRegionId(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  let suffix = ''
+  for (let i = 0; i < 6; i++) {
+    suffix += alphabet[Math.floor(Math.random() * alphabet.length)]!
+  }
+  return `r-${suffix}`
+}
+
+export function bubbleOrderToken(id: number): string {
+  return `b:${id}`
+}
+
+export function regionById(
+  edit: PageEdit | undefined,
+  id: string,
+): Region | undefined {
+  return edit?.regions?.find((r) => r.id === id)
 }

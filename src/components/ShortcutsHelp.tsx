@@ -9,14 +9,19 @@ import {
 interface ShortcutsHelpProps {
   open: boolean
   onClose: () => void
+  shortcuts?: ReadonlyArray<{ keys: string; label: string; group: string }>
 }
 
-export function ShortcutsHelp({ open, onClose }: ShortcutsHelpProps) {
+export function ShortcutsHelp({
+  open,
+  onClose,
+  shortcuts = WORKSPACE_SHORTCUTS,
+}: ShortcutsHelpProps) {
   const groups = new Map<
     string,
     { keys: string; label: string; group: string }[]
   >()
-  for (const row of WORKSPACE_SHORTCUTS) {
+  for (const row of shortcuts) {
     const list = groups.get(row.group) ?? []
     list.push(row)
     groups.set(row.group, list)

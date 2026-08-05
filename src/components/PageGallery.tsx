@@ -18,6 +18,8 @@ interface PageGalleryProps {
   asDrawer?: boolean
   drawerOpen?: boolean
   onCloseDrawer?: () => void
+  /** Letterer shows done/bubble; translator shows translated/total. */
+  progressMode?: 'done' | 'translated'
 }
 
 export function PageGallery({
@@ -30,6 +32,7 @@ export function PageGallery({
   asDrawer,
   drawerOpen,
   onCloseDrawer,
+  progressMode = 'done',
 }: PageGalleryProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const thumbSize = useSession((s) => s.ui.thumbSize)
@@ -74,7 +77,11 @@ export function PageGallery({
             Sayfalar
           </h2>
           <p className="text-[length:var(--text-meta)] text-[var(--color-ink-muted)]">
-            {pages.length ? `${pages.length} sayfa` : '—'}
+            {pages.length
+              ? progressMode === 'translated'
+                ? `${pages.length} sayfa · J/K`
+                : `${pages.length} sayfa`
+              : '—'}
           </p>
         </div>
         <div className="flex gap-0.5" role="group" aria-label="Görünüm">
@@ -142,9 +149,21 @@ export function PageGallery({
             const typeset = statusLabel(page.typeset_status)
             const selected = page.id === selectedPageId
             const progress =
-              page.bubble_count > 0
-                ? (page.done_count ?? 0) / page.bubble_count
-                : 0
+              progressMode === 'translated'
+                ? page.bubble_count > 0
+                  ? (page.translated_count ?? 0) /
+                    Math.max(
+                      page.bubble_count,
+                      page.translated_count ?? 0,
+                    )
+                  : 0
+                : page.bubble_count > 0
+                  ? (page.done_count ?? 0) / page.bubble_count
+                  : 0
+            const progressTitle =
+              progressMode === 'translated'
+                ? `${page.translated_count ?? 0}/${page.bubble_count} çevrildi`
+                : `${page.done_count ?? 0}/${page.bubble_count}`
             const label = page.stem || `Sayfa ${page.page_no}`
 
             if (thumbSize === 'sm') {
@@ -184,7 +203,7 @@ export function PageGallery({
                     {page.bubble_count > 0 && (
                       <span
                         className="h-1 w-8 shrink-0 overflow-hidden rounded-full bg-[var(--color-surface-muted)]"
-                        title={`${page.done_count ?? 0}/${page.bubble_count}`}
+                        title={progressTitle}
                       >
                         <span
                           className="block h-full bg-[var(--color-success)]"
@@ -233,7 +252,7 @@ export function PageGallery({
                   {page.bubble_count > 0 && (
                     <div
                       className="h-1 w-full overflow-hidden rounded-full bg-[var(--color-surface-muted)]"
-                      title={`${page.done_count ?? 0}/${page.bubble_count}`}
+                      title={progressTitle}
                     >
                       <div
                         className="h-full bg-[var(--color-success)] transition-[width]"
@@ -242,13 +261,18 @@ export function PageGallery({
                     </div>
                   )}
                   <div className="flex flex-wrap gap-1">
-                    {page.clean_status !== 'ok' && (
+                    {progressMode !== 'translated' && page.clean_status !== 'ok' && (
                       <Badge variant={clean.variant}>clean: {clean.text}</Badge>
                     )}
-                    {page.typeset_status !== 'ok' && (
+                    {progressMode !== 'translated' && page.typeset_status !== 'ok' && (
                       <Badge variant={typeset.variant}>
                         dizgi: {typeset.text}
                       </Badge>
+                    )}
+                    {progressMode === 'translated' && page.bubble_count > 0 && (
+                      <span className="text-[length:var(--text-meta)] tabular-nums text-[var(--color-ink-muted)]">
+                        {progressTitle}
+                      </span>
                     )}
                   </div>
                 </button>

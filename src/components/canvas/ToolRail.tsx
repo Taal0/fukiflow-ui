@@ -3,13 +3,14 @@ import {
   Square,
   Paintbrush,
   Eraser,
+  SquareDashed,
 } from 'lucide-react'
 import type { ActiveTool } from '@/store/session'
 import { useSession } from '@/store/session'
 import { Tooltip, TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-const TOOLS: {
+const ALL_TOOLS: {
   id: ActiveTool
   label: string
   shortcut: string
@@ -19,11 +20,20 @@ const TOOLS: {
   { id: 'frame', label: 'Kutu', shortcut: 'M', icon: Square },
   { id: 'paint', label: 'Boya', shortcut: 'B', icon: Paintbrush },
   { id: 'restore', label: 'Geri al fırçası', shortcut: 'R', icon: Eraser },
+  { id: 'region', label: 'Metin kutusu', shortcut: 'R', icon: SquareDashed },
 ]
 
-export function ToolRail() {
+interface ToolRailProps {
+  /** Subset of tools to show (default: letterer set). */
+  tools?: ActiveTool[]
+}
+
+const LETTERER_TOOLS: ActiveTool[] = ['select', 'frame', 'paint', 'restore']
+
+export function ToolRail({ tools = LETTERER_TOOLS }: ToolRailProps) {
   const activeTool = useSession((s) => s.ui.activeTool)
   const setActiveTool = useSession((s) => s.setActiveTool)
+  const visible = ALL_TOOLS.filter((t) => tools.includes(t.id))
 
   return (
     <TooltipProvider>
@@ -32,7 +42,7 @@ export function ToolRail() {
         aria-label="Canvas araçları"
         className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-[var(--color-border)] bg-[var(--color-surface-raised)] py-2"
       >
-        {TOOLS.map((t) => {
+        {visible.map((t) => {
           const Icon = t.icon
           const on = activeTool === t.id
           return (

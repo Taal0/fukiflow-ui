@@ -107,6 +107,118 @@ export function hitTestBubble(
   return null
 }
 
+/** Axis-aligned hit test — prefer smaller regions when overlapping. */
+export function hitTestRegion(
+  regions: { id: string; bbox: BBox }[],
+  x: number,
+  y: number,
+): { id: string; bbox: BBox } | null {
+  const ordered = [...regions].sort((a, b) => {
+    const aa = (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1])
+    const bb = (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1])
+    return aa - bb
+  })
+  for (const region of ordered) {
+    const [x0, y0, x1, y1] = region.bbox
+    if (x >= x0 && x <= x1 && y >= y0 && y <= y1) return region
+  }
+  return null
+}
+
+export type OrderBadgeItem = {
+  kind: 'bubble' | 'region'
+  id: string
+  bbox: BBox
+  index: number
+}
+
+/** Draw dashed translator regions (visible overlay — not in compose export). */
+export function drawRegions(
+  ctx: CanvasRenderingContext2D,
+  regions: { id: string; bbox: BBox }[],
+  activeId: string | null,
+  scale: number,
+  opts?: { interactive?: boolean },
+): void {
+  const interactive = opts?.interactive ?? true
+  const stroke = Math.max(1, 1.5 / scale)
+  const focus =
+    typeof getComputedStyle !== 'undefined'
+      ? getComputedStyle(document.documentElement)
+          .getPropertyValue('--color-focus')
+          .trim() || '#2a6fdb'
+      : '#2a6fdb'
+
+  for (const region of regions) {
+    const [x0, y0, x1, y1] = region.bbox
+    const active = region.id === activeId
+    ctx.save()
+    ctx.strokeStyle = active ? focus : '#2a6fdb'
+    ctx.globalAlpha = active ? 1 : 0.75
+    ctx.lineWidth = stroke
+    ctx.setLineDash([6 / scale, 4 / scale])
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
+    ctx.setLineDash([])
+
+    if (interactive && active) {
+      const r = Math.max(3, 5 / scale)
+      const handles: [number, number][] = [
+        [x0, y0],
+        [x1, y0],
+        [x0, y1],
+        [x1, y1],
+      ]
+      for (const [hx, hy] of handles) {
+        ctx.fillStyle = '#fff'
+        ctx.strokeStyle = focus
+        ctx.lineWidth = stroke
+        ctx.beginPath()
+        ctx.rect(hx - r, hy - r, r * 2, r * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+  }
+}
+
+/** Order badges at top-left of each item bbox (visible overlay only). */
+export function drawOrderBadges(
+  ctx: CanvasRenderingContext2D,
+  items: OrderBadgeItem[],
+  scale: number,
+): void {
+  const meta =
+    typeof getComputedStyle !== 'undefined'
+      ? getComputedStyle(document.documentElement)
+          .getPropertyValue('--text-meta')
+          .trim()
+      : ''
+  const fontPx = Math.max(10, (parseFloat(meta) || 11) / scale)
+  ctx.save()
+  ctx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`
+  ctx.textBaseline = 'top'
+  for (const item of items) {
+    const [x0, y0] = item.bbox
+    const label =
+      item.kind === 'region' ? `R${item.index}` : String(item.index)
+    const pad = 2 / scale
+    const metrics = ctx.measureText(label)
+    const tw = metrics.width + pad * 2
+    const th = fontPx + pad * 2
+    const bx = x0
+    const by = Math.max(0, y0 - th - 2 / scale)
+    ctx.fillStyle = 'rgba(255,255,255,0.92)'
+    ctx.fillRect(bx, by, tw, th)
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)'
+    ctx.lineWidth = Math.max(0.5, 1 / scale)
+    ctx.strokeRect(bx, by, tw, th)
+    ctx.fillStyle = '#3a3a3a'
+    ctx.fillText(label, bx + pad, by + pad)
+  }
+  ctx.restore()
+}
+
 function layoutForLayer(
   layer: Layer,
   layoutsByBubble: Record<number, BubbleLayout>,

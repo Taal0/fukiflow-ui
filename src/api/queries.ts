@@ -73,12 +73,14 @@ export function useSavePageEditMutation() {
       pageId,
       rev,
       edit,
+      user_id,
     }: {
       pageId: number
       rev: number
       edit: PageEdit
+      user_id?: string | null
       signal?: AbortSignal
-    }) => api.putPageEdit(pageId, { rev, edit }),
+    }) => api.putPageEdit(pageId, { rev, edit, user_id }),
     onSuccess: () => {
       // Refresh gallery progress only — don't refetch the open page doc
       // (client already has the overlay; a mid-edit refetch races hydrate).

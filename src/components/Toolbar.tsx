@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   MoreHorizontal,
   Undo2,
@@ -183,6 +184,12 @@ export function Toolbar({
             </Button>
           )}
           <BrandMark />
+          <Link
+            to="/translate"
+            className="shrink-0 text-[length:var(--text-meta)] text-[var(--color-ink-muted)] underline-offset-2 hover:text-[var(--color-ink)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+          >
+            Çevirmen
+          </Link>
           {pageLabel && (
             <span className="truncate text-[length:var(--text-ui)] text-[var(--color-ink-muted)]">
               {pageLabel}

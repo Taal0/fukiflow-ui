@@ -131,6 +131,8 @@ export interface PageSummary {
   bubble_count: number
   /** Bubbles marked done in the PageEdit overlay. */
   done_count?: number
+  /** Overlay texts (bubbles + regions) with non-empty strip. */
+  translated_count?: number
 }
 
 /** Per-bubble overlay fields persisted in PageEdit. */
@@ -158,12 +160,25 @@ export interface PaintStroke {
   points: Point[]
 }
 
-/** Letterer overlay — seed PageDoc stays immutable. */
+/** Manual translator box — not a seed bubble; never enters typeset/compose. */
+export interface Region {
+  id: string
+  bbox: BBox
+  text: string
+  status: 'unclassified' | string
+  confidence: number | null
+}
+
+/** Letterer / translator overlay — seed PageDoc stays immutable. */
 export interface PageEdit {
   rev: number
   page?: { font?: string }
   bubbles: Record<string, BubbleEdit>
   paint?: PaintStroke[]
+  /** Translator-drawn boxes (SFX / missed text). */
+  regions?: Region[]
+  /** Unified reading order tokens: `b:<id>` | `r-*`. */
+  order?: string[]
 }
 
 export type BrushMode = 'off' | 'fill' | 'restore'
@@ -180,6 +195,7 @@ export interface PageProgress {
   page_no: number
   bubble_count: number
   done_count: number
+  translated_count?: number
 }
 
 export interface ChapterProgress {

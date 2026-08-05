@@ -4,6 +4,7 @@ import type {
   BubbleLayout,
   FontInfo,
   PageDoc,
+  Region,
 } from '@/api/types'
 import { BubbleFilters } from '@/components/bubbles/BubbleFilters'
 import { BubbleInspector } from '@/components/bubbles/BubbleInspector'
@@ -16,6 +17,7 @@ import {
   layoutForBubble,
 } from '@/components/bubbles/bubbleUtils'
 import { EmptyState } from '@/components/ui/empty-state'
+import { orderedItems } from '@/lib/workingDoc'
 import {
   type BubbleFilter,
   useSession,
@@ -30,6 +32,9 @@ interface BubblePanelProps {
   textOverrides: Record<number, string>
   bubbleFontOverrides: Record<number, string>
   bubbleEdits: Record<string, BubbleEdit>
+  /** Translator regions — shown read-only in letterer panel. */
+  regions?: Region[]
+  order?: string[]
   fonts: FontInfo[]
   typesetPending?: boolean
   width: number
@@ -74,6 +79,8 @@ export function BubblePanel({
   textOverrides,
   bubbleFontOverrides,
   bubbleEdits,
+  regions = [],
+  order = [],
   fonts,
   typesetPending,
   width,
@@ -106,6 +113,17 @@ export function BubblePanel({
     [doc.bubbles],
   )
 
+  const unified = useMemo(
+    () =>
+      orderedItems(doc, {
+        rev: 0,
+        bubbles: bubbleEdits,
+        regions,
+        order,
+      }),
+    [doc, bubbleEdits, regions, order],
+  )
+
   const doneCount = bubbles.filter(
     (b) => bubbleEdits[String(b.id)]?.done,
   ).length
@@ -129,6 +147,34 @@ export function BubblePanel({
       search,
     ],
   )
+
+  const visibleIds = useMemo(() => new Set(visible.map((b) => b.id)), [visible])
+
+  const listRows = useMemo(() => {
+    // When filtering, fall back to bubble-only list; otherwise show unified order.
+    if (filter !== 'all' || search.trim()) {
+      return visible.map((b) => ({
+        kind: 'bubble' as const,
+        bubble: b,
+        index: b.reading_order ?? b.id,
+      }))
+    }
+    return unified
+      .map((item, i) => {
+        if (item.kind === 'bubble') {
+          const bubble = doc.bubbles.find((b) => b.id === Number(item.id))
+          if (!bubble || !visibleIds.has(bubble.id)) return null
+          return { kind: 'bubble' as const, bubble, index: i + 1 }
+        }
+        const region = regions.find((r) => r.id === item.id)
+        if (!region) return null
+        return { kind: 'region' as const, region, index: i + 1 }
+      })
+      .filter(Boolean) as Array<
+      | { kind: 'bubble'; bubble: PageDoc['bubbles'][number]; index: number }
+      | { kind: 'region'; region: Region; index: number }
+    >
+  }, [filter, search, visible, unified, doc.bubbles, regions, visibleIds])
 
   const selected = bubbles.find((b) => b.id === selectedBubbleId) ?? null
   const selectedLayout = selected
@@ -190,7 +236,7 @@ export function BubblePanel({
           style={{ flexBasis: `${listPct}%` }}
           className="min-h-0 flex-shrink overflow-y-auto p-1.5"
         >
-          {visible.length === 0 ? (
+          {listRows.length === 0 ? (
             <EmptyState
               title={bubbles.length === 0 ? 'Balon yok' : 'Sonuç yok'}
               description={
@@ -208,7 +254,27 @@ export function BubblePanel({
             />
           ) : (
             <ul className="flex flex-col gap-0.5">
-              {visible.map((bubble) => {
+              {listRows.map((row) => {
+                if (row.kind === 'region') {
+                  const preview =
+                    row.region.text.replace(/\s+/g, ' ').trim() || '—'
+                  return (
+                    <li key={row.region.id}>
+                      <div
+                        className="flex h-10 w-full items-center gap-2 rounded-md px-2 text-[var(--color-ink-muted)]"
+                        title="Çevirmen kutusu (salt okunur)"
+                      >
+                        <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded border border-dashed border-[var(--color-focus)] px-1 text-[length:var(--text-meta)] font-semibold tabular-nums text-[var(--color-focus)]">
+                          R{row.index}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-[length:var(--text-ui)]">
+                          {preview}
+                        </span>
+                      </div>
+                    </li>
+                  )
+                }
+                const bubble = row.bubble
                 const layout = layoutForBubble(
                   bubble.id,
                   layoutsByBubble,
@@ -220,7 +286,7 @@ export function BubblePanel({
                   <BubbleRow
                     key={bubble.id}
                     bubble={bubble}
-                    order={bubble.reading_order ?? '—'}
+                    order={row.index}
                     text={text}
                     badges={bubbleBadges(bubble, layout)}
                     done={Boolean(be?.done)}

@@ -48,6 +48,11 @@ export const WORKSPACE_SHORTCUTS: ReadonlyArray<{
   { group: 'Fırça', keys: '⇧[ ⇧]', label: 'Fırça boyutu ±4' },
   { group: 'Genel', keys: 'Esc', label: 'Aracı kapat / seçimi kaldır' },
   { group: 'Genel', keys: '?', label: 'Kısayollar paneli' },
+  {
+    group: 'Genel',
+    keys: '⌘…',
+    label: 'Tarayıcı kısayolları (yenile, sekme…) — uygulama yakalamaz',
+  },
 ]
 
 /** Global keyboard shortcuts for the letterer workspace. */
@@ -98,6 +103,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
       }
 
       // Undo / redo — allow even from text fields (standard editor feel).
+      // Only ⌘Z / ⌘⇧Z / ⌘Y — never other browser chords (⌘⇧R reload, ⌘T, …).
       if (mod && pageId != null && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault()
         if (e.shiftKey) redo(pageId)
@@ -109,6 +115,9 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
         redo(pageId)
         return
       }
+
+      // Let the browser keep ⌘/Ctrl chords (reload, new tab, find, …).
+      if (mod) return
 
       if (inField) return
 

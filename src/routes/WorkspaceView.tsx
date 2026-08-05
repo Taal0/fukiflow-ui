@@ -347,6 +347,8 @@ export function WorkspaceView() {
         textOverrides={textOverrides}
         bubbleFontOverrides={bubbleFontOverrides}
         bubbleEdits={edit?.bubbles ?? {}}
+        regions={edit?.regions ?? []}
+        order={edit?.order ?? []}
         fonts={fontsQ.data ?? []}
         typesetPending={typesetPending}
         width={panelResize.width}

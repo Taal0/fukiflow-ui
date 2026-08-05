@@ -26,6 +26,8 @@ function contentFingerprint(edit: PageEdit): string {
     page: edit.page ?? {},
     bubbles: edit.bubbles ?? {},
     paint: edit.paint ?? [],
+    regions: edit.regions ?? [],
+    order: edit.order ?? [],
   })
 }
 
@@ -39,7 +41,8 @@ function contentFingerprint(edit: PageEdit): string {
  *
  * Returns ``retrySave`` for the toolbar when saveStatus is error.
  */
-export function useAutosave() {
+export function useAutosave(opts?: { userId?: string | null }) {
+  const userId = opts?.userId ?? null
   const dirtyKey = useSession((s) => {
     const parts: string[] = []
     for (const [id, page] of Object.entries(s.pages)) {
@@ -63,6 +66,8 @@ export function useAutosave() {
   const pendingAfterFlight = useRef<Set<number>>(new Set())
   const lastSavedContent = useRef<Map<number, string>>(new Map())
   const savePageRef = useRef<(pageId: number) => Promise<void>>(async () => {})
+  const userIdRef = useRef(userId)
+  userIdRef.current = userId
 
   const scheduleSave = (pageId: number) => {
     const existing = timerByPage.current.get(pageId)
@@ -103,6 +108,7 @@ export function useAutosave() {
         pageId,
         rev: expectedRev,
         edit: payload,
+        user_id: userIdRef.current ?? undefined,
       })
       lastSavedContent.current.set(pageId, contentFingerprint(result.edit))
       markSaved(pageId, result.edit)

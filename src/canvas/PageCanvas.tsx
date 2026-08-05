@@ -39,30 +39,44 @@ import {
   useSession,
 } from '@/store/session'
 import { drawPaintStrokes } from '@/lib/paintStroke'
+import { orderedItems } from '@/lib/workingDoc'
 import {
   composePage,
+  drawOrderBadges,
+  drawRegions,
   fitTransform,
   hitTestBubble,
+  hitTestRegion,
   loadBitmaps,
   screenToPage,
+  type OrderBadgeItem,
   type ViewTransform,
 } from './compositor'
 import { usePageFonts } from './useFontFace'
 
+export type CanvasMode = 'letterer' | 'translator'
+
 interface PageCanvasProps {
   detail: PageDetail
   fonts: FontInfo[]
+  /** Translator: region tool + order badges; letterer: read-only region outlines. */
+  mode?: CanvasMode
 }
 
-type DragMode = 'pan' | 'split' | 'frame' | 'brush' | null
+type DragMode = 'pan' | 'split' | 'frame' | 'brush' | 'region' | null
 
 const EMPTY_SET = new Set<string>()
 const EMPTY_NUM_RECORD: Record<number, number> = {}
 const EMPTY_STR_RECORD: Record<number, string> = {}
 const EMPTY_LAYOUTS: Record<number, BubbleLayout> = {}
 const HANDLE_SCREEN_PX = 10
+const MIN_REGION_PX = 8
 
-export function PageCanvas({ detail, fonts }: PageCanvasProps) {
+export function PageCanvas({
+  detail,
+  fonts,
+  mode = 'letterer',
+}: PageCanvasProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const offscreenRef = useRef<HTMLCanvasElement | null>(null)
@@ -93,6 +107,9 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   /** In-progress brush stroke (committed on pointerup as one undo step). */
   const liveStrokeRef = useRef<PaintStroke | null>(null)
   const [liveStrokeTick, setLiveStrokeTick] = useState(0)
+  /** Live region rect while drawing (page px). */
+  const liveRegionRef = useRef<BBox | null>(null)
+  const [liveRegionTick, setLiveRegionTick] = useState(0)
   const [cursorPage, setCursorPage] = useState<Point | null>(null)
 
   const [ready, setReady] = useState(false)
@@ -113,8 +130,10 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   const splitRatio = useSession((s) => s.splitRatio)
   const setSplitRatio = useSession((s) => s.setSplitRatio)
   const selectBubble = useSession((s) => s.selectBubble)
+  const selectRegion = useSession((s) => s.selectRegion)
   const setFrame = useSession((s) => s.setFrame)
   const appendPaintStroke = useSession((s) => s.appendPaintStroke)
+  const addRegion = useSession((s) => s.addRegion)
   const setBrushColor = useSession((s) => s.setBrushColor)
   const brush = useSession((s) => s.brush)
   const theme = useSession((s) => s.ui.theme)
@@ -125,8 +144,11 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   const [toolHint, setToolHint] = useState<string | null>(null)
 
   const selectedBubbleId = pageSession?.selectedBubbleId ?? null
+  const selectedRegionId = pageSession?.selectedRegionId ?? null
   const edit = pageSession?.edit
-  const brushActive = brush.mode !== 'off'
+  const regions = edit?.regions ?? []
+  const regionTool = mode === 'translator' && activeTool === 'region'
+  const brushActive = mode === 'letterer' && brush.mode !== 'off'
   const disabledLayerIds = useMemo(
     () => (edit ? disabledLayerIdsFromEdit(edit) : EMPTY_SET),
     [edit],
@@ -419,6 +441,47 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       ctx.restore()
     }
 
+    // Visible overlay pass: regions + order badges (never baked into compose).
+    const overlayRegions: { id: string; bbox: BBox }[] = regions.map((r) => ({
+      id: r.id,
+      bbox: r.bbox,
+    }))
+    if (liveRegionRef.current) {
+      overlayRegions.push({ id: '__live__', bbox: liveRegionRef.current })
+    }
+    if (overlayRegions.length || mode === 'translator') {
+      ctx.save()
+      ctx.translate(t.offsetX, t.offsetY)
+      ctx.scale(t.scale, t.scale)
+      if (overlayRegions.length) {
+        drawRegions(
+          ctx,
+          overlayRegions,
+          selectedRegionId,
+          t.scale || 1,
+          { interactive: mode === 'translator' },
+        )
+      }
+      if (mode === 'translator') {
+        const items = orderedItems(detail.doc, edit)
+        const badges: OrderBadgeItem[] = []
+        items.forEach((item, i) => {
+          if (item.kind === 'bubble') {
+            const b = detail.doc.bubbles.find((x) => x.id === Number(item.id))
+            if (b) badges.push({ kind: 'bubble', id: item.id, bbox: b.bbox, index: i + 1 })
+          } else {
+            const r =
+              item.id === '__live__'
+                ? null
+                : regions.find((x) => x.id === item.id)
+            if (r) badges.push({ kind: 'region', id: r.id, bbox: r.bbox, index: i + 1 })
+          }
+        })
+        drawOrderBadges(ctx, badges, t.scale || 1)
+      }
+      ctx.restore()
+    }
+
     // Keep status zoom in sync with transform (avoid store churn).
     const pct = Math.round((transformRef.current.scale || 1) * 100)
     if (useSession.getState().ui.zoomPercent !== pct) {
@@ -456,12 +519,17 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     selectedFrame,
     liveFrameTick,
     liveStrokeTick,
+    liveRegionTick,
     brushActive,
     brush.mode,
     brush.radiusPx,
     cursorPage,
     insetOverrideBubbleIds,
     theme,
+    regions,
+    selectedRegionId,
+    mode,
+    edit,
   ])
 
   // Apply zoom commands from ZoomControls.
@@ -504,6 +572,7 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       frame: 'Kutu — taşı / boyutlandır',
       paint: 'Boya fırçası',
       restore: 'Geri al fırçası',
+      region: 'Metin kutusu çiz',
     }
     setToolHint(labels[activeTool] ?? null)
     const t = window.setTimeout(() => setToolHint(null), 2000)
@@ -616,8 +685,30 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       return
     }
 
+    // Translator region draw — drag a dashed rectangle.
+    if (e.button === 0 && regionTool) {
+      const page = screenToPage(x, y, transformRef.current)
+      const px = Math.max(0, Math.min(sourceW, page.x))
+      const py = Math.max(0, Math.min(sourceH, page.y))
+      liveRegionRef.current = [px, py, px, py]
+      dragRef.current = {
+        mode: 'region',
+        startX: px,
+        startY: py,
+        originX: transformRef.current.offsetX,
+        originY: transformRef.current.offsetY,
+        originSplit: splitRatio,
+        moved: false,
+      }
+      e.currentTarget.setPointerCapture(e.pointerId)
+      setLiveRegionTick((t) => t + 1)
+      setCursor('crosshair')
+      return
+    }
+
     if (
       e.button === 0 &&
+      mode === 'letterer' &&
       selectedBubble &&
       storedFrame &&
       selectedBubble.clean_status !== 'editor'
@@ -669,9 +760,12 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
 
     const drag = dragRef.current
     if (!drag) {
-      if (brushActive) {
+      if (regionTool) {
+        setCursor('crosshair')
+      } else if (brushActive) {
         setCursor(selectedBubble ? 'crosshair' : 'cell')
       } else if (
+        mode === 'letterer' &&
         selectedBubble &&
         storedFrame &&
         selectedBubble.clean_status !== 'editor'
@@ -685,6 +779,21 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     }
 
     if (drag.mode === 'split') {
+      return
+    }
+
+    if (drag.mode === 'region') {
+      const page = screenToPage(x, y, transformRef.current)
+      const px = Math.max(0, Math.min(sourceW, page.x))
+      const py = Math.max(0, Math.min(sourceH, page.y))
+      const x0 = Math.min(drag.startX, px)
+      const y0 = Math.min(drag.startY, py)
+      const x1 = Math.max(drag.startX, px)
+      const y1 = Math.max(drag.startY, py)
+      if (Math.abs(x1 - x0) > 0.5 || Math.abs(y1 - y0) > 0.5) drag.moved = true
+      liveRegionRef.current = [x0, y0, x1, y1]
+      setLiveRegionTick((t) => t + 1)
+      schedulePaint()
       return
     }
 
@@ -754,6 +863,21 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       return
     }
 
+    if (drag?.mode === 'region') {
+      const final = liveRegionRef.current
+      liveRegionRef.current = null
+      setLiveRegionTick((t) => t + 1)
+      if (final && drag.moved) {
+        const [x0, y0, x1, y1] = final
+        if (x1 - x0 >= MIN_REGION_PX && y1 - y0 >= MIN_REGION_PX) {
+          addRegion(pageId, final)
+        }
+      }
+      setCursor(regionTool ? 'crosshair' : 'grab')
+      schedulePaint()
+      return
+    }
+
     if (drag?.mode === 'frame' && drag.bubbleId != null) {
       const final = liveFrameRef.current
       if (final && drag.moved) {
@@ -778,8 +902,19 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     if (moved) return
 
     const page = screenToPage(x, y, transformRef.current)
+    // Regions before bubbles — smaller/manual targets win.
+    const regionHit = hitTestRegion(regions, page.x, page.y)
+    if (regionHit) {
+      selectRegion(regionHit.id)
+      return
+    }
     const hit = hitTestBubble(detail.doc.bubbles, page.x, page.y)
-    selectBubble(hit?.id ?? null)
+    if (hit) {
+      selectBubble(hit.id)
+      return
+    }
+    selectBubble(null)
+    selectRegion(null)
   }
 
   const onDoubleClick = () => {
