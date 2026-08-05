@@ -1,4 +1,4 @@
-import type { Layer, PageDoc, PageDetail, PageEdit } from '@/api/types'
+import type { BBox, Layer, PageDoc, PageDetail, PageEdit } from '@/api/types'
 import type { PageSession } from '@/store/session'
 import {
   bubbleFontsFromEdit,
@@ -8,6 +8,7 @@ import {
   textOverridesFromEdit,
 } from '@/store/session'
 import type { TypesetBody } from '@/api/client'
+import { resolveBubbleFrame } from '@/lib/bubbleFrame'
 
 /** Merge session typeset layers into the seed PageDoc for compose/download. */
 export function buildWorkingDoc(
@@ -45,6 +46,15 @@ export function buildTypesetBody(
   detail: PageDetail,
   session: PageSession | undefined,
   pageFont?: string | null,
+  opts?: {
+    /** Force-include frame/font_px for specific bubbles (auto typeset). */
+    forceBubbleIds?: number[]
+    /** Materialized font_px / frame for force path. */
+    forceOverrides?: Record<
+      number,
+      { font_px?: number; frame?: BBox }
+    >
+  },
 ): TypesetBody {
   const edit = session?.edit
   const textOverrides = textOverridesFromEdit(edit)
@@ -71,19 +81,35 @@ export function buildTypesetBody(
   }
 
   const overrides: NonNullable<TypesetBody['overrides']> = {}
-  const bubbleIds = new Set([
-    ...Object.keys(sizeOverrides).map(Number),
-    ...Object.keys(bubbleFonts).map(Number),
-  ])
-  for (const id of bubbleIds) {
-    const entry: { font_scale?: number; font?: string; font_px?: number } = {}
+
+  // The editable text box always drives layout — its current position and
+  // size (letterer-set, or the largest rect inscribed in the bubble polygon
+  // by default) is sent on every typeset call, not only after the letterer
+  // explicitly touches it. `resolveBubbleFrame` never falls back to the bare
+  // `bbox` for round/tailed bubbles — see `computeDefaultFrame` — so this
+  // stays safe without needing to gate it behind a manual edit.
+  for (const bubble of detail.doc.bubbles) {
+    const id = bubble.id
+    const be = edit?.bubbles[String(id)]
+    const forced = opts?.forceOverrides?.[id]
+    const entry: NonNullable<TypesetBody['overrides']>[string] = {}
+
     const scale = sizeOverrides[id]
-    if (scale != null && scale !== 1) entry.font_scale = scale
+    if (scale != null && scale !== 1 && forced?.font_px == null && be?.font_px == null) {
+      entry.font_scale = scale
+    }
     const font = bubbleFonts[id]
     if (font) entry.font = font
-    const fontPx = edit?.bubbles[String(id)]?.font_px
+
+    const fontPx = forced?.font_px ?? be?.font_px
     if (fontPx != null) entry.font_px = fontPx
-    if (Object.keys(entry).length) overrides[String(id)] = entry
+
+    entry.frame = forced?.frame ?? resolveBubbleFrame(bubble, be)
+
+    if (be?.leading != null) entry.leading = be.leading
+    if (be?.align) entry.align = be.align
+
+    overrides[String(id)] = entry
   }
 
   return {

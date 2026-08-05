@@ -6,7 +6,17 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import type { BubbleLayout, FontInfo, PageDetail, ViewMode } from '@/api/types'
+import type { BBox, BubbleLayout, FontInfo, PageDetail, ViewMode } from '@/api/types'
+import {
+  clampFrame,
+  cursorForFrameHandle,
+  frameKey,
+  hitTestFrame,
+  nudgeFrame,
+  resizeFrame,
+  resolveBubbleFrame,
+  type FrameHandle,
+} from '@/lib/bubbleFrame'
 import {
   bubbleFontsFromEdit,
   disabledLayerIdsFromEdit,
@@ -29,12 +39,13 @@ interface PageCanvasProps {
   fonts: FontInfo[]
 }
 
-type DragMode = 'pan' | 'split' | null
+type DragMode = 'pan' | 'split' | 'frame' | null
 
 const EMPTY_SET = new Set<string>()
 const EMPTY_NUM_RECORD: Record<number, number> = {}
 const EMPTY_STR_RECORD: Record<number, string> = {}
 const EMPTY_LAYOUTS: Record<number, BubbleLayout> = {}
+const HANDLE_SCREEN_PX = 10
 
 export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -53,11 +64,19 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     originX: number
     originY: number
     originSplit: number
+    handle?: FrameHandle
+    originFrame?: BBox
+    bubbleId?: number
+    moved?: boolean
   } | null>(null)
+  /** Live frame while dragging (page px) — avoids undo spam mid-drag. */
+  const liveFrameRef = useRef<BBox | null>(null)
+  const [liveFrameTick, setLiveFrameTick] = useState(0)
 
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [viewSize, setViewSize] = useState({ w: 0, h: 0 })
+  const [cursor, setCursor] = useState('grab')
 
   const pageId = detail.page.id
   const originalUrl = detail.assets.original_url
@@ -72,6 +91,7 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   const splitRatio = useSession((s) => s.splitRatio)
   const setSplitRatio = useSession((s) => s.setSplitRatio)
   const selectBubble = useSession((s) => s.selectBubble)
+  const setFrame = useSession((s) => s.setFrame)
   const pageSession = useSession((s) => s.pages[pageId])
 
   const selectedBubbleId = pageSession?.selectedBubbleId ?? null
@@ -91,6 +111,22 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   )
   const fontOverride = pageFontFromEdit(edit)
 
+  const selectedBubble =
+    selectedBubbleId != null
+      ? detail.doc.bubbles.find((b) => b.id === selectedBubbleId)
+      : undefined
+
+  const storedFrame = useMemo(() => {
+    if (!selectedBubble) return null
+    return resolveBubbleFrame(
+      selectedBubble,
+      edit?.bubbles[String(selectedBubble.id)],
+    )
+  }, [selectedBubble, edit])
+
+  const selectedFrame = liveFrameRef.current ?? storedFrame
+  const storedFrameKey = frameKey(storedFrame)
+
   const neededFontKeys = fonts.map((f) => f.key)
   const { ready: fontsReady } = usePageFonts(fonts, neededFontKeys)
 
@@ -108,12 +144,18 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     return () => ro.disconnect()
   }, [])
 
+  // Clear live overlay when selection changes or a committed frame lands
+  // (value key — not array identity — so mid-drag refs don't wipe the drag).
+  useEffect(() => {
+    if (dragRef.current?.mode === 'frame') return
+    liveFrameRef.current = null
+  }, [selectedBubbleId, storedFrameKey])
+
   // Load source + clean layer bitmaps (asset identity only — not session edits)
   useEffect(() => {
     let cancelled = false
     setReady(false)
     setLoadError(null)
-    // Keep previous source on screen until the new page bitmaps arrive.
     userTransformedRef.current = false
 
     const urls = [originalUrl, ...cleanUrlsKey.split('|').filter(Boolean)]
@@ -152,15 +194,12 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     return () => {
       cancelled = true
     }
-    // viewSize intentionally omitted — paint() re-fits from live measurements
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId, originalUrl, cleanUrlsKey, sourceW, sourceH])
 
   const paint = useEffectEvent(() => {
     const canvas = canvasRef.current
     const source = sourceRef.current
-    // Don't block the page image on font loading — text layers may briefly
-    // use a fallback face until FontFace is ready, then we repaint.
     if (!canvas || !source || !ready) return
 
     const dpr = window.devicePixelRatio || 1
@@ -176,7 +215,6 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       0
     if (cssW < 1 || cssH < 1) return
 
-    // Always re-fit unless the user zoomed/panned — covers remount and 0×0 races.
     if (!userTransformedRef.current) {
       transformRef.current = fitTransform(sourceW, sourceH, cssW, cssH)
     }
@@ -208,6 +246,9 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     const octx = off.getContext('2d')
     if (!octx) return
 
+    const scale = transformRef.current.scale || 1
+    const handleRadius = HANDLE_SCREEN_PX / scale
+
     const composeInput = {
       source,
       doc: detail.doc,
@@ -220,6 +261,14 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       bubbleFontOverrides,
       fonts,
       selectedBubbleId,
+      // No movable box for `editor`-status bubbles — vision never typesets
+      // them automatically, so a draggable frame would be interactive-looking
+      // but functionally dead. Fall back to the plain polygon outline.
+      selectedFrame:
+        selectedBubbleId != null && selectedBubble?.clean_status !== 'editor'
+          ? (liveFrameRef.current ?? storedFrame)
+          : null,
+      handleRadius,
     }
 
     const t = transformRef.current
@@ -256,11 +305,9 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     } else if (viewMode === 'composed') {
       drawComposedAt()
     } else {
-      // Split: left = composed, right = original
       const splitX = cssW * splitRatio
       drawComposedAt(splitX)
       drawOriginalAt(splitX)
-      // Divider
       ctx.save()
       ctx.fillStyle = '#b83a26'
       ctx.fillRect(splitX - 1, 0, 2, cssH)
@@ -278,9 +325,6 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   })
 
   const schedulePaint = useEffectEvent(() => {
-    // Cancel any pending frame first. React Strict Mode runs effect cleanups
-    // and re-runs effects on the same instance; if we leave a cancelled RAF id
-    // in rafRef, later schedulePaint calls no-op forever and the canvas stays blank.
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
@@ -307,6 +351,8 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     bubbleFontOverrides,
     fonts,
     detail,
+    selectedFrame,
+    liveFrameTick,
     schedulePaint,
   ])
 
@@ -336,6 +382,15 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       offsetY: my - page.y * nextScale,
     }
     schedulePaint()
+  }
+
+  const frameHitAt = (pageX: number, pageY: number): FrameHandle | null => {
+    if (!selectedBubble || !storedFrame) return null
+    if (selectedBubble.clean_status === 'editor') return null
+    const scale = transformRef.current.scale || 1
+    // Match drawn handle half-size (constant screen px → page px)
+    const half = HANDLE_SCREEN_PX / scale
+    return hitTestFrame(liveFrameRef.current ?? storedFrame, pageX, pageY, half)
   }
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -373,6 +428,33 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       return
     }
 
+    if (
+      e.button === 0 &&
+      selectedBubble &&
+      storedFrame &&
+      selectedBubble.clean_status !== 'editor'
+    ) {
+      const page = screenToPage(x, y, transformRef.current)
+      const handle = frameHitAt(page.x, page.y)
+      if (handle) {
+        dragRef.current = {
+          mode: 'frame',
+          startX: page.x,
+          startY: page.y,
+          originX: transformRef.current.offsetX,
+          originY: transformRef.current.offsetY,
+          originSplit: splitRatio,
+          handle,
+          originFrame: [...(liveFrameRef.current ?? storedFrame)] as BBox,
+          bubbleId: selectedBubble.id,
+          moved: false,
+        }
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setCursor(cursorForFrameHandle(handle))
+        return
+      }
+    }
+
     if (e.button === 0) {
       dragRef.current = {
         mode: 'pan',
@@ -387,15 +469,42 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   }
 
   const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const drag = dragRef.current
-    if (!drag) return
     const rect = canvasRef.current?.getBoundingClientRect()
     if (!rect) return
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
+    const drag = dragRef.current
+    if (!drag) {
+      if (selectedBubble && storedFrame && selectedBubble.clean_status !== 'editor') {
+        const page = screenToPage(x, y, transformRef.current)
+        setCursor(cursorForFrameHandle(frameHitAt(page.x, page.y)))
+      } else {
+        setCursor('grab')
+      }
+      return
+    }
+
     if (drag.mode === 'split') {
       setSplitRatio(x / Math.max(1, rect.width))
+      return
+    }
+
+    if (drag.mode === 'frame' && drag.originFrame && drag.handle != null) {
+      const page = screenToPage(x, y, transformRef.current)
+      const dx = page.x - drag.startX
+      const dy = page.y - drag.startY
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) drag.moved = true
+      let next: BBox
+      if (drag.handle === 'move') {
+        next = nudgeFrame(drag.originFrame, dx, dy)
+      } else {
+        next = resizeFrame(drag.originFrame, drag.handle, dx, dy)
+      }
+      next = clampFrame(next, sourceW, sourceH)
+      liveFrameRef.current = next
+      setLiveFrameTick((t) => t + 1)
+      schedulePaint()
       return
     }
 
@@ -421,6 +530,20 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     } catch {
       /* ignore */
     }
+
+    if (drag?.mode === 'frame' && drag.bubbleId != null) {
+      const final = liveFrameRef.current
+      if (final && drag.moved) {
+        // Persist the box only — moving/resizing it never reflows text by
+        // itself (plan §Faz 1 #4); the letterer must press "Oto dizgi".
+        setFrame(pageId, drag.bubbleId, final)
+      }
+      liveFrameRef.current = null
+      setLiveFrameTick((t) => t + 1)
+      setCursor('grab')
+      return
+    }
+
     if (!drag || drag.mode !== 'pan') return
 
     const rect = canvasRef.current?.getBoundingClientRect()
@@ -454,7 +577,8 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     >
       <canvas
         ref={canvasRef}
-        className="block h-full w-full touch-none cursor-grab active:cursor-grabbing"
+        className="block h-full w-full touch-none"
+        style={{ cursor }}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -486,7 +610,7 @@ function ViewModeHint({ mode }: { mode: ViewMode }) {
         : 'Yan yana — ayıracı sürükleyin'
   return (
     <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-md bg-[var(--color-surface-raised)]/90 px-3 py-1 text-xs text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
-      {label} · tekerlek: yakınlaştır · çift tık: sığdır
+      {label} · kutuyu taşı/boyutlandır · Oto dizgi: yazıyı kutuya diz
     </div>
   )
 }

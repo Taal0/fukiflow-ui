@@ -22,6 +22,7 @@ interface ToolbarProps {
   saveError?: string | null
   dirty?: boolean
   onResetPage?: () => void
+  onAutoTypesetPage?: () => void
 }
 
 export function Toolbar({
@@ -36,6 +37,7 @@ export function Toolbar({
   saveError,
   dirty,
   onResetPage,
+  onAutoTypesetPage,
 }: ToolbarProps) {
   const viewMode = useSession((s) => s.viewMode)
   const setViewMode = useSession((s) => s.setViewMode)
@@ -167,6 +169,16 @@ export function Toolbar({
           className="w-40"
         />
         <ViewToggle value={viewMode} onChange={setViewMode} />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!detail || typesetPending || busy != null}
+          onClick={() => onAutoTypesetPage?.()}
+          title="Sayfadaki tüm balonları mevcut kutu/punto ile yeniden diz"
+        >
+          Oto dizgi
+        </Button>
         <Button
           type="button"
           variant="outline"

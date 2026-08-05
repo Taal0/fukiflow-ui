@@ -1,6 +1,11 @@
 import { useEffect } from 'react'
 import type { PageDoc, PageSummary } from '@/api/types'
 import { cleanLayerId, textLayerId } from '@/api/types'
+import {
+  clampFrame,
+  nudgeFrame,
+  resolveBubbleFrame,
+} from '@/lib/bubbleFrame'
 import { useSession } from '@/store/session'
 
 interface Args {
@@ -23,6 +28,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const setViewMode = useSession((s) => s.setViewMode)
   const toggleLayer = useSession((s) => s.toggleLayer)
   const toggleBubbleDone = useSession((s) => s.toggleBubbleDone)
+  const setFrame = useSession((s) => s.setFrame)
   const undo = useSession((s) => s.undo)
   const redo = useSession((s) => s.redo)
   const pageSession = useSession((s) =>
@@ -56,8 +62,8 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
 
       if (inField) return
 
-      // Page navigation
-      if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'j') {
+      // Page navigation (j/k / PageUp/Down — arrows reserved for frame nudge)
+      if (e.key === 'PageDown' || e.key === 'j') {
         if (!pages.length) return
         e.preventDefault()
         const idx = pages.findIndex((p) => p.id === selectedPageId)
@@ -65,7 +71,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
         selectPage(pages[next]!.id)
         return
       }
-      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'k') {
+      if (e.key === 'PageUp' || e.key === 'k') {
         if (!pages.length) return
         e.preventDefault()
         const idx = pages.findIndex((p) => p.id === selectedPageId)
@@ -94,22 +100,44 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
       const selected = pageSession?.selectedBubbleId ?? null
       const idx = bubbles.findIndex((b) => b.id === selected)
 
-      // Bubble navigation — arrows, n/p, and Tab / Shift+Tab in reading order
+      // Frame nudge — arrow keys when a bubble is selected. Only moves the
+      // box; text does not reflow until "Oto dizgi" (plan §Faz 1 #4).
       if (
-        e.key === 'ArrowRight' ||
-        e.key === 'n' ||
-        (e.key === 'Tab' && !e.shiftKey)
+        selected != null &&
+        (e.key === 'ArrowLeft' ||
+          e.key === 'ArrowRight' ||
+          e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown')
       ) {
+        e.preventDefault()
+        const bubble = doc.bubbles.find((b) => b.id === selected)
+        if (!bubble || bubble.clean_status === 'editor') return
+        const be = pageSession?.edit.bubbles[String(selected)]
+        const cur = resolveBubbleFrame(bubble, be)
+        const step = e.shiftKey ? 10 : 1
+        let dx = 0
+        let dy = 0
+        if (e.key === 'ArrowLeft') dx = -step
+        if (e.key === 'ArrowRight') dx = step
+        if (e.key === 'ArrowUp') dy = -step
+        if (e.key === 'ArrowDown') dy = step
+        const next = clampFrame(
+          nudgeFrame(cur, dx, dy),
+          doc.source.width,
+          doc.source.height,
+        )
+        setFrame(pageId, selected, next)
+        return
+      }
+
+      // Bubble navigation — n/p and Tab / Shift+Tab in reading order
+      if (e.key === 'n' || (e.key === 'Tab' && !e.shiftKey)) {
         e.preventDefault()
         const next = bubbles[Math.min(bubbles.length - 1, Math.max(0, idx) + 1)]
         if (next) selectBubble(next.id)
         return
       }
-      if (
-        e.key === 'ArrowLeft' ||
-        e.key === 'p' ||
-        (e.key === 'Tab' && e.shiftKey)
-      ) {
+      if (e.key === 'p' || (e.key === 'Tab' && e.shiftKey)) {
         e.preventDefault()
         const next = bubbles[Math.max(0, (idx < 0 ? 0 : idx) - 1)]
         if (next) selectBubble(next.id)
@@ -149,11 +177,13 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     pageId,
     selectedPageId,
     pageSession?.selectedBubbleId,
+    pageSession?.edit,
     selectPage,
     selectBubble,
     setViewMode,
     toggleLayer,
     toggleBubbleDone,
+    setFrame,
     undo,
     redo,
   ])

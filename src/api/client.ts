@@ -87,7 +87,14 @@ export interface TypesetBody {
   font?: string | null
   overrides?: Record<
     string,
-    { font_px?: number; font_scale?: number; font?: string }
+    {
+      font_px?: number
+      font_scale?: number
+      font?: string
+      frame?: [number, number, number, number] | number[]
+      leading?: number
+      align?: string
+    }
   > | null
 }
 

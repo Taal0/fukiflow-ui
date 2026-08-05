@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   Bubble,
   BubbleEdit,
@@ -14,11 +14,16 @@ import { Button } from '@/components/ui/button'
 import { FontSelect } from '@/components/FontSelect'
 import { LayerRow } from '@/components/LayerRow'
 import { reasonLabel } from '@/components/flags'
+import { resolveFontPx } from '@/lib/bubbleFrame'
 import { cn } from '@/lib/utils'
 
-const SIZE_STEP = 0.05
-const SIZE_MIN = 0.5
-const SIZE_MAX = 2
+const FONT_PX_STEP = 1
+const FONT_PX_MIN = 8
+const FONT_PX_MAX = 96
+const LEADING_STEP = 0.05
+const LEADING_MIN = 0.8
+const LEADING_MAX = 2.0
+const DEFAULT_LEADING = 1.15
 
 interface BubbleListProps {
   doc: PageDoc
@@ -27,7 +32,6 @@ interface BubbleListProps {
   layoutsByBubble: Record<number, BubbleLayout>
   textOverrides: Record<number, string>
   bubbleFontOverrides: Record<number, string>
-  sizeOverrides: Record<number, number>
   bubbleEdits: Record<string, BubbleEdit>
   fonts: FontInfo[]
   typesetPending?: boolean
@@ -38,7 +42,11 @@ interface BubbleListProps {
   onTextChange: (bubbleId: number, text: string) => void
   onResetText: (bubbleId: number) => void
   onBubbleFont: (bubbleId: number, fontKey: string | null) => void
-  onSizeChange: (bubbleId: number, scale: number | null) => void
+  onFontPx: (bubbleId: number, px: number | null) => void
+  onLeading: (bubbleId: number, leading: number | null) => void
+  onAlign: (bubbleId: number, align: 'left' | 'center' | null) => void
+  onResetFrame: (bubbleId: number) => void
+  onAutoTypeset: (bubbleId: number) => void
   onToggleDone: (bubbleId: number, done: boolean) => void
 }
 
@@ -53,6 +61,59 @@ function displayText(
 ): string {
   if (overrides[bubbleId] !== undefined) return overrides[bubbleId]!
   return seedText(bubbleId, texts)
+}
+
+/** The text as it is *currently* broken into lines on the page, one line per
+ * row, so the sidebar box always mirrors what's rendered. `null` when there's
+ * no successful layout yet (falls back to the flat override/seed text). */
+function layoutFormattedText(layout: BubbleLayout | undefined): string | null {
+  if (!layout || layout.status !== 'ok' || !layout.lines?.length) return null
+  return layout.lines.map((l) => l.text).join('\n')
+}
+
+/** Text box that mirrors the current on-page line breaks while idle, so the
+ * letterer can see + hand-edit wrapping (typed newlines = forced breaks),
+ * but never fights the user's cursor while they're actively typing. */
+function BubbleTextArea({
+  text,
+  layout,
+  onFocus,
+  onChange,
+}: {
+  text: string
+  layout: BubbleLayout | undefined
+  onFocus: () => void
+  onChange: (text: string) => void
+}) {
+  const external = layoutFormattedText(layout) ?? text
+  const [local, setLocal] = useState(external)
+  const [focused, setFocused] = useState(false)
+  const syncedRef = useRef(external)
+
+  useEffect(() => {
+    if (focused || external === syncedRef.current) return
+    syncedRef.current = external
+    setLocal(external)
+  }, [external, focused])
+
+  return (
+    <textarea
+      value={local}
+      rows={3}
+      spellCheck={false}
+      onFocus={() => {
+        setFocused(true)
+        onFocus()
+      }}
+      onBlur={() => setFocused(false)}
+      onChange={(e) => {
+        setLocal(e.target.value)
+        onChange(e.target.value)
+      }}
+      className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 py-1.5 text-xs leading-snug text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      placeholder="Balon metni…"
+    />
+  )
 }
 
 function bubbleBadges(bubble: Bubble, layout: BubbleLayout | undefined): string[] {
@@ -80,7 +141,6 @@ export function BubbleList({
   layoutsByBubble,
   textOverrides,
   bubbleFontOverrides,
-  sizeOverrides,
   bubbleEdits,
   fonts,
   typesetPending,
@@ -91,7 +151,11 @@ export function BubbleList({
   onTextChange,
   onResetText,
   onBubbleFont,
-  onSizeChange,
+  onFontPx,
+  onLeading,
+  onAlign,
+  onResetFrame,
+  onAutoTypeset,
   onToggleDone,
 }: BubbleListProps) {
   const listRef = useRef<HTMLDivElement>(null)
@@ -151,6 +215,7 @@ export function BubbleList({
               layoutsByBubble[bubble.id] ??
               layerById(doc.layers, textLayerId(bubble.id))?.layout ??
               undefined
+            const be = bubbleEdits[String(bubble.id)]
             const text = displayText(bubble.id, doc.texts, textOverrides)
             const seed = seedText(bubble.id, doc.texts)
             const dirty = textOverrides[bubble.id] !== undefined
@@ -160,9 +225,12 @@ export function BubbleList({
             const clnLayer = layerById(doc.layers, clnId)
             const txtLayer = layerById(doc.layers, txtId)
             const selected = bubble.id === selectedBubbleId
-            const scale = sizeOverrides[bubble.id] ?? 1
-            const pct = Math.round(scale * 100)
-            const done = Boolean(bubbleEdits[String(bubble.id)]?.done)
+            const fontPx = resolveFontPx(be, layout)
+            const leading = be?.leading ?? DEFAULT_LEADING
+            const align = (be?.align as 'left' | 'center' | undefined) ?? 'center'
+            const hasFrame = Boolean(be?.frame)
+            const done = Boolean(be?.done)
+            const isEditor = bubble.clean_status === 'editor'
 
             const clnOn =
               clnLayer != null &&
@@ -215,14 +283,12 @@ export function BubbleList({
                   )}
 
                   <div className="flex flex-col gap-2 pl-7">
-                    <textarea
-                      value={text}
-                      rows={3}
-                      spellCheck={false}
+                    <BubbleTextArea
+                      key={bubble.id}
+                      text={text}
+                      layout={layout}
                       onFocus={() => onSelect(bubble.id)}
-                      onChange={(e) => onTextChange(bubble.id, e.target.value)}
-                      className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 py-1.5 text-xs leading-snug text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-                      placeholder="Balon metni…"
+                      onChange={(v) => onTextChange(bubble.id, v)}
                     />
                     {dirty && (
                       <button
@@ -247,46 +313,168 @@ export function BubbleList({
                       />
                     </div>
 
+                    {/* Font size px */}
                     <div className="flex items-center gap-1.5">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 w-7 px-0"
-                        aria-label="Küçült"
-                        onClick={() => {
-                          const next = Math.max(SIZE_MIN, +(scale - SIZE_STEP).toFixed(2))
-                          onSizeChange(bubble.id, next === 1 ? null : next)
-                        }}
-                      >
-                        −
-                      </Button>
-                      <span className="min-w-[3rem] text-center text-[11px] tabular-nums text-[var(--color-ink-muted)]">
-                        %{pct}
+                      <span className="w-10 shrink-0 text-[10px] uppercase tracking-wide text-[var(--color-ink-muted)]">
+                        Px
                       </span>
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         className="h-7 w-7 px-0"
-                        aria-label="Büyüt"
+                        aria-label="Küçült"
+                        disabled={isEditor}
                         onClick={() => {
-                          const next = Math.min(SIZE_MAX, +(scale + SIZE_STEP).toFixed(2))
-                          onSizeChange(bubble.id, next === 1 ? null : next)
+                          const next = Math.max(FONT_PX_MIN, fontPx - FONT_PX_STEP)
+                          onFontPx(bubble.id, next)
+                        }}
+                      >
+                        −
+                      </Button>
+                      <input
+                        type="number"
+                        min={FONT_PX_MIN}
+                        max={FONT_PX_MAX}
+                        value={fontPx}
+                        disabled={isEditor}
+                        onFocus={() => onSelect(bubble.id)}
+                        onChange={(e) => {
+                          const v = Number(e.target.value)
+                          if (!Number.isFinite(v)) return
+                          onFontPx(
+                            bubble.id,
+                            Math.min(FONT_PX_MAX, Math.max(FONT_PX_MIN, Math.round(v))),
+                          )
+                        }}
+                        className="h-7 w-14 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-1.5 text-center text-[11px] tabular-nums text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 px-0"
+                        aria-label="Büyüt"
+                        disabled={isEditor}
+                        onClick={() => {
+                          const next = Math.min(FONT_PX_MAX, fontPx + FONT_PX_STEP)
+                          onFontPx(bubble.id, next)
                         }}
                       >
                         +
                       </Button>
-                      {scale !== 1 && (
+                      {be?.font_px != null && (
                         <button
                           type="button"
                           className="ml-1 text-[11px] text-[var(--color-ink-muted)] hover:text-[var(--color-accent)]"
-                          onClick={() => onSizeChange(bubble.id, null)}
+                          onClick={() => onFontPx(bubble.id, null)}
                         >
                           Sıfırla
                         </button>
                       )}
                     </div>
+
+                    {/* Leading */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-10 shrink-0 text-[10px] uppercase tracking-wide text-[var(--color-ink-muted)]">
+                        Satır
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 px-0"
+                        aria-label="Leading azalt"
+                        disabled={isEditor}
+                        onClick={() => {
+                          const next = Math.max(
+                            LEADING_MIN,
+                            +(leading - LEADING_STEP).toFixed(2),
+                          )
+                          onLeading(
+                            bubble.id,
+                            Math.abs(next - DEFAULT_LEADING) < 0.001 ? null : next,
+                          )
+                        }}
+                      >
+                        −
+                      </Button>
+                      <span className="min-w-[3rem] text-center text-[11px] tabular-nums text-[var(--color-ink-muted)]">
+                        {leading.toFixed(2)}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 px-0"
+                        aria-label="Leading artır"
+                        disabled={isEditor}
+                        onClick={() => {
+                          const next = Math.min(
+                            LEADING_MAX,
+                            +(leading + LEADING_STEP).toFixed(2),
+                          )
+                          onLeading(
+                            bubble.id,
+                            Math.abs(next - DEFAULT_LEADING) < 0.001 ? null : next,
+                          )
+                        }}
+                      >
+                        +
+                      </Button>
+                    </div>
+
+                    {/* Align */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-10 shrink-0 text-[10px] uppercase tracking-wide text-[var(--color-ink-muted)]">
+                        Hiza
+                      </span>
+                      <Button
+                        type="button"
+                        variant={align === 'left' ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-7 flex-1 text-[11px]"
+                        disabled={isEditor}
+                        onClick={() => onAlign(bubble.id, 'left')}
+                      >
+                        Sol
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={align === 'center' ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-7 flex-1 text-[11px]"
+                        disabled={isEditor}
+                        onClick={() => onAlign(bubble.id, null)}
+                      >
+                        Orta
+                      </Button>
+                    </div>
+
+                    {/* Auto typeset + reset frame */}
+                    {!isEditor && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[11px]"
+                          disabled={typesetPending || !text.trim()}
+                          onClick={() => onAutoTypeset(bubble.id)}
+                        >
+                          Oto dizgi
+                        </Button>
+                        {hasFrame && (
+                          <button
+                            type="button"
+                            className="text-[11px] text-[var(--color-ink-muted)] underline-offset-2 hover:text-[var(--color-accent)] hover:underline"
+                            onClick={() => onResetFrame(bubble.id)}
+                          >
+                            Kutuyu balona sıfırla
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     {layout?.overflow && (
                       <p className="text-[11px] text-[var(--color-warn)]">

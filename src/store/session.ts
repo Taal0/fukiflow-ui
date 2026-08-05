@@ -54,6 +54,19 @@ interface SessionState {
   clearBubbleText: (pageId: number, bubbleId: number) => void
   setBubbleFont: (pageId: number, bubbleId: number, fontKey: string | null) => void
   setSizeOverride: (pageId: number, bubbleId: number, scale: number | null) => void
+  setFontPx: (pageId: number, bubbleId: number, px: number | null) => void
+  setLeading: (pageId: number, bubbleId: number, leading: number | null) => void
+  setAlign: (
+    pageId: number,
+    bubbleId: number,
+    align: BubbleEdit['align'] | null,
+  ) => void
+  setFrame: (
+    pageId: number,
+    bubbleId: number,
+    frame: BubbleEdit['frame'] | null,
+    opts?: { undo?: boolean },
+  ) => void
   setPageFont: (pageId: number, fontKey: string | null) => void
   toggleLayer: (pageId: number, layerId: string) => void
   setLayerEnabled: (pageId: number, layerId: string, enabled: boolean) => void
@@ -115,6 +128,24 @@ function ensurePage(
 
 function cloneEdit(edit: PageEdit): PageEdit {
   return structuredClone(edit)
+}
+
+/** Stable compare for autosave dirty detection (ignore key insertion order). */
+function stableEditCore(edit: PageEdit): string {
+  const core = {
+    page: edit.page ?? {},
+    bubbles: edit.bubbles ?? {},
+    paint: edit.paint ?? [],
+  }
+  return JSON.stringify(core, (_key, v) => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const obj = v as Record<string, unknown>
+      const sorted: Record<string, unknown> = {}
+      for (const k of Object.keys(obj).sort()) sorted[k] = obj[k]
+      return sorted
+    }
+    return v
+  })
 }
 
 function bubbleKey(id: number): string {
@@ -319,6 +350,63 @@ export const useSession = create<SessionState>((set, get) => ({
     }))
   },
 
+  setFontPx: (pageId, bubbleId, px) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => {
+        if (px == null || px <= 0) {
+          return withBubblePatch(edit, bubbleId, { font_px: null })
+        }
+        // Prefer font_px over legacy % scale.
+        return withBubblePatch(edit, bubbleId, {
+          font_px: Math.round(px),
+          font_scale: null,
+        })
+      }),
+    }))
+  },
+
+  setLeading: (pageId, bubbleId, leading) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => {
+        if (leading == null || leading <= 0) {
+          return withBubblePatch(edit, bubbleId, { leading: null })
+        }
+        return withBubblePatch(edit, bubbleId, {
+          leading: Math.round(leading * 100) / 100,
+        })
+      }),
+    }))
+  },
+
+  setAlign: (pageId, bubbleId, align) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) =>
+        withBubblePatch(edit, bubbleId, { align: align ?? null }),
+      ),
+    }))
+  },
+
+  setFrame: (pageId, bubbleId, frame, opts) => {
+    set((s) => ({
+      pages: applyEditMutation(
+        s.pages,
+        pageId,
+        (edit) =>
+          withBubblePatch(edit, bubbleId, {
+            frame: frame
+              ? [
+                  Math.round(frame[0]!),
+                  Math.round(frame[1]!),
+                  Math.round(frame[2]!),
+                  Math.round(frame[3]!),
+                ]
+              : null,
+          }),
+        opts,
+      ),
+    }))
+  },
+
   setPageFont: (pageId, fontKey) => {
     set((s) => ({
       pages: applyEditMutation(s.pages, pageId, (edit) => {
@@ -441,25 +529,18 @@ export const useSession = create<SessionState>((set, get) => ({
   markSaved: (pageId, edit) => {
     set((s) => {
       const cur = ensurePage(s.pages, pageId)
-      const localCore = JSON.stringify({
-        page: cur.edit.page,
-        bubbles: cur.edit.bubbles,
-        paint: cur.edit.paint,
-      })
-      const savedCore = JSON.stringify({
-        page: edit.page,
-        bubbles: edit.bubbles,
-        paint: edit.paint,
-      })
+      const localCore = stableEditCore(cur.edit)
+      const savedCore = stableEditCore(edit)
       const stillDirty = localCore !== savedCore
       return {
         pages: {
           ...s.pages,
           [pageId]: {
             ...cur,
+            // Prefer server shape when content matches — avoids key-order churn.
             edit: stillDirty
               ? { ...cur.edit, rev: edit.rev }
-              : cloneEdit(edit),
+              : cloneEdit({ ...edit, rev: edit.rev }),
             dirty: stillDirty,
             saveStatus: stillDirty ? 'idle' : 'saved',
             saveError: null,
@@ -685,4 +766,30 @@ export function doneCountFromEdit(edit: PageEdit | undefined): number {
 
 export function pageFontFromEdit(edit: PageEdit | undefined): string | null {
   return edit?.page?.font ?? null
+}
+
+/** Fingerprint fields that should auto-trigger typeset (not frame). */
+export function typesetTriggerFromEdit(edit: PageEdit | undefined): {
+  text: Record<number, string>
+  fonts: Record<number, string>
+  scales: Record<number, number>
+  fontPx: Record<number, number>
+  leading: Record<number, number>
+  align: Record<number, string>
+} {
+  const text = textOverridesFromEdit(edit)
+  const fonts = bubbleFontsFromEdit(edit)
+  const scales = sizeOverridesFromEdit(edit)
+  const fontPx: Record<number, number> = {}
+  const leading: Record<number, number> = {}
+  const align: Record<number, string> = {}
+  if (edit) {
+    for (const [k, be] of Object.entries(edit.bubbles)) {
+      const id = Number(k)
+      if (be.font_px != null) fontPx[id] = be.font_px
+      if (be.leading != null) leading[id] = be.leading
+      if (be.align) align[id] = be.align
+    }
+  }
+  return { text, fonts, scales, fontPx, leading, align }
 }

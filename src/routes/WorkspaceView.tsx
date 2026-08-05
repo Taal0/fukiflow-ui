@@ -7,6 +7,7 @@ import {
   useFonts,
   usePage,
 } from '@/api/queries'
+import { textLayerId } from '@/api/types'
 import { PageCanvas } from '@/canvas/PageCanvas'
 import { BubbleList } from '@/components/BubbleList'
 import { MobileWarning } from '@/components/MobileWarning'
@@ -16,12 +17,15 @@ import { Toolbar } from '@/components/Toolbar'
 import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
 import { useWorkspaceKeys } from '@/hooks/useWorkspaceKeys'
+import {
+  resolveBubbleFrame,
+  resolveFontPx,
+} from '@/lib/bubbleFrame'
 import { buildWorkingDoc } from '@/lib/workingDoc'
 import {
   bubbleFontsFromEdit,
   disabledLayerIdsFromEdit,
   doneCountFromEdit,
-  sizeOverridesFromEdit,
   textOverridesFromEdit,
   useSession,
 } from '@/store/session'
@@ -37,7 +41,10 @@ export function WorkspaceView() {
   const setBubbleText = useSession((s) => s.setBubbleText)
   const clearBubbleText = useSession((s) => s.clearBubbleText)
   const setBubbleFont = useSession((s) => s.setBubbleFont)
-  const setSizeOverride = useSession((s) => s.setSizeOverride)
+  const setFontPx = useSession((s) => s.setFontPx)
+  const setLeading = useSession((s) => s.setLeading)
+  const setAlign = useSession((s) => s.setAlign)
+  const setFrame = useSession((s) => s.setFrame)
   const setBubbleDone = useSession((s) => s.setBubbleDone)
   const hydrateEdit = useSession((s) => s.hydrateEdit)
   const resetPageLocal = useSession((s) => s.resetPageLocal)
@@ -75,21 +82,17 @@ export function WorkspaceView() {
 
   useAutosave()
 
-  const { pending: typesetPending, error: typesetError } = useDebouncedTypeset(
-    pageQ.data,
-  )
+  const {
+    pending: typesetPending,
+    error: typesetError,
+    runTypeset,
+  } = useDebouncedTypeset(pageQ.data)
 
   const workingDetail = useMemo(() => {
     if (!pageQ.data) return undefined
     const doc = buildWorkingDoc(pageQ.data.doc, pageSession)
     return { ...pageQ.data, doc }
   }, [pageQ.data, pageSession])
-
-  useWorkspaceKeys({
-    pages: pagesQ.data ?? [],
-    doc: workingDetail?.doc,
-    pageId: selectedPageId,
-  })
 
   const chapterTitle =
     chapters.data?.find((c) => c.slug === chapterSlug)?.title ?? chapterSlug
@@ -124,8 +127,70 @@ export function WorkspaceView() {
   const edit = pageSession?.edit
   const textOverrides = textOverridesFromEdit(edit)
   const bubbleFontOverrides = bubbleFontsFromEdit(edit)
-  const sizeOverrides = sizeOverridesFromEdit(edit)
   const disabledLayerIds = disabledLayerIdsFromEdit(edit)
+
+  /**
+   * Force-reflow text into the box's current position/size — explicit
+   * "Oto dizgi" action (per bubble or per page). The box already drives
+   * every typeset call (see `buildTypesetBody`); this additionally pins
+   * the resolved font_px/frame onto the overlay so the layout doesn't
+   * silently shift again on the next unrelated edit.
+   */
+  const autoTypesetBubbles = (
+    bubbleIds: number[],
+    frames?: Record<number, [number, number, number, number]>,
+  ) => {
+    if (!workingDetail || selectedPageId == null) return
+    const session = useSession.getState().pages[selectedPageId]
+    const forceOverrides: Record<
+      number,
+      { font_px?: number; frame?: [number, number, number, number] }
+    > = {}
+
+    for (const id of bubbleIds) {
+      const bubble = workingDetail.doc.bubbles.find((b) => b.id === id)
+      if (!bubble || bubble.clean_status === 'editor') continue
+      const be = session?.edit.bubbles[String(id)]
+      const layout =
+        session?.layoutsByBubble[id] ??
+        workingDetail.doc.layers.find((l) => l.id === textLayerId(id))?.layout
+      const text =
+        be?.text !== undefined
+          ? be.text
+          : (workingDetail.doc.texts.find((t) => t.bubble_id === id)?.text ?? '')
+      if (!String(text).trim()) continue
+
+      const fontPx = resolveFontPx(be, layout)
+      const frame = frames?.[id] ?? resolveBubbleFrame(bubble, be)
+
+      // Single patch — avoids setFontPx+setFrame churn that fought autosave.
+      const patch: {
+        font_px?: number
+        frame?: [number, number, number, number]
+      } = {}
+      if (be?.font_px == null) patch.font_px = fontPx
+      if (!be?.frame && !frames?.[id]) patch.frame = frame
+      if (Object.keys(patch).length) {
+        useSession.getState().patchBubble(selectedPageId, id, patch, {
+          undo: false,
+        })
+      }
+
+      forceOverrides[id] = { font_px: fontPx, frame }
+    }
+
+    if (!Object.keys(forceOverrides).length) return
+    runTypeset({
+      forceBubbleIds: Object.keys(forceOverrides).map(Number),
+      forceOverrides,
+    })
+  }
+
+  useWorkspaceKeys({
+    pages: pagesQ.data ?? [],
+    doc: workingDetail?.doc,
+    pageId: selectedPageId,
+  })
 
   const resetPage = async () => {
     if (selectedPageId == null) return
@@ -133,7 +198,6 @@ export function WorkspaceView() {
       await deleteEdit.mutateAsync(selectedPageId)
       resetPageLocal(selectedPageId)
     } catch (err) {
-      // Local reset still useful if server delete fails on missing row.
       if (err instanceof ApiError && err.status === 404) {
         resetPageLocal(selectedPageId)
         return
@@ -158,6 +222,10 @@ export function WorkspaceView() {
         saveError={pageSession?.saveError}
         dirty={pageSession?.dirty}
         onResetPage={() => void resetPage()}
+        onAutoTypesetPage={() => {
+          if (!workingDetail) return
+          autoTypesetBubbles(workingDetail.doc.bubbles.map((b) => b.id))
+        }}
       />
 
       {(fontsUnavailable || catalogError) && (
@@ -190,10 +258,7 @@ export function WorkspaceView() {
             </div>
           )}
           {workingDetail && (
-            <PageCanvas
-              detail={workingDetail}
-              fonts={fontsQ.data ?? []}
-            />
+            <PageCanvas detail={workingDetail} fonts={fontsQ.data ?? []} />
           )}
           {!pageQ.isPending && !pageQ.error && !workingDetail && (
             <div className="flex h-full items-center justify-center text-sm text-[var(--color-ink-muted)]">
@@ -220,7 +285,6 @@ export function WorkspaceView() {
             layoutsByBubble={pageSession?.layoutsByBubble ?? {}}
             textOverrides={textOverrides}
             bubbleFontOverrides={bubbleFontOverrides}
-            sizeOverrides={sizeOverrides}
             bubbleEdits={edit?.bubbles ?? {}}
             fonts={fontsQ.data ?? []}
             typesetPending={typesetPending}
@@ -243,10 +307,25 @@ export function WorkspaceView() {
               if (selectedPageId == null) return
               setBubbleFont(selectedPageId, bubbleId, fontKey)
             }}
-            onSizeChange={(bubbleId, scale) => {
+            onFontPx={(bubbleId, px) => {
               if (selectedPageId == null) return
-              setSizeOverride(selectedPageId, bubbleId, scale)
+              setFontPx(selectedPageId, bubbleId, px)
             }}
+            onLeading={(bubbleId, leading) => {
+              if (selectedPageId == null) return
+              setLeading(selectedPageId, bubbleId, leading)
+            }}
+            onAlign={(bubbleId, align) => {
+              if (selectedPageId == null) return
+              setAlign(selectedPageId, bubbleId, align)
+            }}
+            onResetFrame={(bubbleId) => {
+              if (selectedPageId == null) return
+              setFrame(selectedPageId, bubbleId, null)
+              // Recompute the default inscribed box and reflow into it.
+              autoTypesetBubbles([bubbleId])
+            }}
+            onAutoTypeset={(bubbleId) => autoTypesetBubbles([bubbleId])}
             onToggleDone={(bubbleId, done) => {
               if (selectedPageId == null) return
               setBubbleDone(selectedPageId, bubbleId, done)

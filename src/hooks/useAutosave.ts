@@ -7,9 +7,22 @@ import { useSession } from '@/store/session'
 
 const DEBOUNCE_MS = 800
 
+/** Stable JSON for deep compare — key order must not affect equality. */
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const obj = v as Record<string, unknown>
+      const sorted: Record<string, unknown> = {}
+      for (const k of Object.keys(obj).sort()) sorted[k] = obj[k]
+      return sorted
+    }
+    return v
+  })
+}
+
 /** Content fingerprint — rev excluded so a successful bump doesn't look like a new edit. */
 function contentFingerprint(edit: PageEdit): string {
-  return JSON.stringify({
+  return stableStringify({
     page: edit.page ?? {},
     bubbles: edit.bubbles ?? {},
     paint: edit.paint ?? [],
@@ -19,8 +32,8 @@ function contentFingerprint(edit: PageEdit): string {
 /**
  * Persist dirty PageEdit overlays.
  *
- * Serial per page: never abort an in-flight PUT (server may already have
- * committed). After each success, if still dirty, save again with the new rev.
+ * Serial per page: never abort an in-flight PUT. After success, if still dirty,
+ * schedule another debounced save (never tight-loop in finally).
  * On 409: adopt server rev, keep local content, retry once.
  */
 export function useAutosave() {
@@ -48,6 +61,16 @@ export function useAutosave() {
     async () => {},
   )
 
+  const scheduleSave = (pageId: number) => {
+    const existing = timerByPage.current.get(pageId)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      timerByPage.current.delete(pageId)
+      void savePageRef.current(pageId)
+    }, DEBOUNCE_MS)
+    timerByPage.current.set(pageId, timer)
+  }
+
   savePageRef.current = async (pageId: number, allowConflictRetry = true) => {
     if (inFlight.current.has(pageId)) {
       pendingAfterFlight.current.add(pageId)
@@ -59,7 +82,8 @@ export function useAutosave() {
 
     const contentFp = contentFingerprint(current.edit)
     if (lastSavedContent.current.get(pageId) === contentFp) {
-      markSaved(pageId, { ...current.edit })
+      // Content already on server — clear dirty without another PUT.
+      markSaved(pageId, current.edit)
       return
     }
 
@@ -89,7 +113,6 @@ export function useAutosave() {
         try {
           const latest = await api.getPageEdit(pageId)
           syncRevFromServer(pageId, latest.rev)
-          // Release lock so the retry can run; don't double-flush in finally.
           inFlight.current.delete(pageId)
           skipFlush = true
           await savePageRef.current(pageId, false)
@@ -122,7 +145,7 @@ export function useAutosave() {
       if (pendingAfterFlight.current.has(pageId)) {
         pendingAfterFlight.current.delete(pageId)
         const again = useSession.getState().pages[pageId]
-        if (again?.dirty) void savePageRef.current(pageId)
+        if (again?.dirty) scheduleSave(pageId)
         return
       }
 
@@ -132,7 +155,8 @@ export function useAutosave() {
         again.saveStatus !== 'error' &&
         lastSavedContent.current.get(pageId) !== contentFingerprint(again.edit)
       ) {
-        void savePageRef.current(pageId)
+        // Debounce — never tight-loop on stillDirty from key-order mismatches.
+        scheduleSave(pageId)
       }
     }
   }
@@ -152,15 +176,7 @@ export function useAutosave() {
         continue
       }
 
-      const existingTimer = timerByPage.current.get(pageId)
-      if (existingTimer) clearTimeout(existingTimer)
-
-      const timer = setTimeout(() => {
-        timerByPage.current.delete(pageId)
-        void savePageRef.current(pageId)
-      }, DEBOUNCE_MS)
-
-      timerByPage.current.set(pageId, timer)
+      scheduleSave(pageId)
     }
   }, [dirtyKey])
 

@@ -1,4 +1,5 @@
 import type {
+  BBox,
   Bubble,
   BubbleLayout,
   FontInfo,
@@ -7,6 +8,7 @@ import type {
   PageDoc,
   Point,
 } from '@/api/types'
+import { frameHandlePoints } from '@/lib/bubbleFrame'
 import { resolveFontFamily } from './useFontFace'
 
 export interface ComposeInput {
@@ -21,6 +23,10 @@ export interface ComposeInput {
   bubbleFontOverrides: Record<number, string>
   fonts: FontInfo[]
   selectedBubbleId: number | null
+  /** Editable text frame for the selected bubble (page px). */
+  selectedFrame?: BBox | null
+  /** Screen-space handle size converted to page px. */
+  handleRadius?: number
 }
 
 const bitmapCache = new Map<string, Promise<ImageBitmap>>()
@@ -142,22 +148,61 @@ function drawTextLayer(
 function drawSelection(
   ctx: CanvasRenderingContext2D,
   bubble: Bubble | undefined,
+  frame: BBox | null | undefined,
+  handleRadius: number,
 ): void {
-  if (!bubble?.polygon?.length) return
+  if (!bubble) return
   ctx.save()
-  ctx.beginPath()
-  const [x0, y0] = bubble.polygon[0]!
-  ctx.moveTo(x0, y0)
-  for (let i = 1; i < bubble.polygon.length; i++) {
-    const [x, y] = bubble.polygon[i]!
-    ctx.lineTo(x, y)
+
+  // Bubble polygon tint (context)
+  if (bubble.polygon?.length) {
+    ctx.beginPath()
+    const [px0, py0] = bubble.polygon[0]!
+    ctx.moveTo(px0, py0)
+    for (let i = 1; i < bubble.polygon.length; i++) {
+      const [x, y] = bubble.polygon[i]!
+      ctx.lineTo(x, y)
+    }
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(184, 58, 38, 0.08)'
+    ctx.fill()
   }
-  ctx.closePath()
-  ctx.fillStyle = 'rgba(184, 58, 38, 0.12)'
-  ctx.strokeStyle = '#b83a26'
-  ctx.lineWidth = 2
-  ctx.fill()
-  ctx.stroke()
+
+  // Editable text frame
+  if (frame && frame.length >= 4) {
+    const [x0, y0, x1, y1] = frame
+    // Stroke width ~constant in screen space
+    const stroke = Math.max(1, Math.min(2.5, handleRadius * 0.35))
+    ctx.strokeStyle = '#b83a26'
+    ctx.lineWidth = stroke
+    ctx.setLineDash([6 / Math.max(stroke, 1), 4 / Math.max(stroke, 1)])
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
+    ctx.setLineDash([])
+
+    const r = Math.max(4, handleRadius)
+    for (const p of frameHandlePoints(frame)) {
+      ctx.fillStyle = '#fff'
+      ctx.strokeStyle = '#b83a26'
+      ctx.lineWidth = stroke
+      ctx.beginPath()
+      ctx.rect(p.x - r, p.y - r, r * 2, r * 2)
+      ctx.fill()
+      ctx.stroke()
+    }
+  } else if (bubble.polygon?.length) {
+    ctx.beginPath()
+    const [px0, py0] = bubble.polygon[0]!
+    ctx.moveTo(px0, py0)
+    for (let i = 1; i < bubble.polygon.length; i++) {
+      const [x, y] = bubble.polygon[i]!
+      ctx.lineTo(x, y)
+    }
+    ctx.closePath()
+    ctx.strokeStyle = '#b83a26'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+
   ctx.restore()
 }
 
@@ -192,7 +237,12 @@ export function composePage(
 
   if (input.selectedBubbleId != null) {
     const bubble = input.doc.bubbles.find((b) => b.id === input.selectedBubbleId)
-    drawSelection(ctx, bubble)
+    drawSelection(
+      ctx,
+      bubble,
+      input.selectedFrame,
+      input.handleRadius ?? 5,
+    )
   }
 }
 
