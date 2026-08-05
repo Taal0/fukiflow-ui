@@ -187,7 +187,8 @@ export interface ChapterProgress {
   pages: PageProgress[]
 }
 
-export type SaveStatus = 'idle' | 'saved' | 'saving' | 'error'
+export type SaveStatus = 'idle' | 'saved' | 'saving' | 'error' | 'conflict'
+
 
 export interface LayerAsset {
   layer_id: string
@@ -214,6 +215,8 @@ export interface PageDetail {
   /** PageEdit overlay; empty shape when none saved yet. */
   edit?: PageEdit | null
   edit_rev?: number
+  /** Last writer identity (roller seam). */
+  edit_author?: string | null
 }
 
 export interface FontInfo {

@@ -5,6 +5,7 @@ import { FontSelect } from '@/components/FontSelect'
 import { ViewToggle } from '@/components/ViewToggle'
 import { Button } from '@/components/ui/button'
 import {
+  buildComposePayloadForPage,
   buildWorkingDoc,
   disabledOffList,
 } from '@/lib/workingDoc'
@@ -26,6 +27,8 @@ interface ToolbarProps {
   onResetPage?: () => void
   onAutoTypesetPage?: () => void
   onRetrySave?: () => void
+  onConflictTakeServer?: () => void
+  onConflictKeepMine?: () => void
   onOpenShortcuts?: () => void
 }
 
@@ -44,6 +47,8 @@ export function Toolbar({
   onResetPage,
   onAutoTypesetPage,
   onRetrySave,
+  onConflictTakeServer,
+  onConflictKeepMine,
   onOpenShortcuts,
 }: ToolbarProps) {
   const viewMode = useSession((s) => s.viewMode)
@@ -98,15 +103,11 @@ export function Toolbar({
       for (let i = 0; i < pages.length; i++) {
         const p = pages[i]!
         setProgress(`${i + 1} / ${pages.length} hazırlanıyor…`)
-        const pageDetail =
-          detail?.page.id === p.id ? detail : await api.page(p.id)
+        // Always load seed + DB edit from the API. Live session overlays
+        // (unsaved work + typeset cache) are merged inside the helper.
+        const pageDetail = await api.page(p.id)
         const session = sessionPages[p.id]
-        payloads.push({
-          page_id: p.id,
-          doc: buildWorkingDoc(pageDetail.doc, session),
-          off: disabledOffList(session),
-          font: pageFontFromEdit(session?.edit),
-        })
+        payloads.push(await buildComposePayloadForPage(pageDetail, session))
       }
       setProgress('Zip paketleniyor…')
       const blob = await api.downloadChapter(chapterSlug, payloads)
@@ -123,13 +124,15 @@ export function Toolbar({
   const saveLabel =
     saveStatus === 'saving'
       ? 'Kaydediliyor…'
-      : saveStatus === 'error'
-        ? 'Kayıt hatası'
-        : saveStatus === 'saved' && !dirty
-          ? 'Kaydedildi'
-          : dirty
-            ? 'Kaydedilmedi'
-            : null
+      : saveStatus === 'conflict'
+        ? 'Kayıt çakışması'
+        : saveStatus === 'error'
+          ? 'Kayıt hatası'
+          : saveStatus === 'saved' && !dirty
+            ? 'Kaydedildi'
+            : dirty
+              ? 'Kaydedilmedi'
+              : null
 
   return (
     <header className="relative flex h-12 shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4">
@@ -153,7 +156,7 @@ export function Toolbar({
         {saveLabel && (
           <span
             className={
-              saveStatus === 'error'
+              saveStatus === 'error' || saveStatus === 'conflict'
                 ? 'text-[11px] text-[var(--color-danger)]'
                 : 'text-[11px] text-[var(--color-ink-muted)]'
             }
@@ -161,6 +164,30 @@ export function Toolbar({
           >
             {saveLabel}
           </span>
+        )}
+        {saveStatus === 'conflict' && (
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => onConflictTakeServer?.()}
+              title="Sunucudaki sürümü al; yerel değişiklikler silinir"
+            >
+              Sunucuyu al
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px] text-[var(--color-danger)]"
+              onClick={() => onConflictKeepMine?.()}
+              title="Yerel sürümü sunucuya yaz"
+            >
+              Benimkini yaz
+            </Button>
+          </>
         )}
         {saveStatus === 'error' && onRetrySave && (
           <Button

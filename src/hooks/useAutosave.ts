@@ -34,7 +34,8 @@ function contentFingerprint(edit: PageEdit): string {
  *
  * Serial per page: never abort an in-flight PUT. After success, if still dirty,
  * schedule another debounced save (never tight-loop in finally).
- * On 409: adopt server rev, keep local content, retry once.
+ * On 409: surface conflict UI (keep local visible; stash server copy) — no
+ * silent last-write-wins. User chooses take-server or keep-mine.
  *
  * Returns ``retrySave`` for the toolbar when saveStatus is error.
  */
@@ -43,6 +44,8 @@ export function useAutosave() {
     const parts: string[] = []
     for (const [id, page] of Object.entries(s.pages)) {
       if (!page.dirty) continue
+      // Don't autosave while a conflict is awaiting user choice.
+      if (page.saveStatus === 'conflict') continue
       parts.push(`${id}:${contentFingerprint(page.edit)}`)
     }
     return parts.sort().join(';;')
@@ -50,7 +53,7 @@ export function useAutosave() {
   const markSaving = useSession((s) => s.markSaving)
   const markSaved = useSession((s) => s.markSaved)
   const markSaveError = useSession((s) => s.markSaveError)
-  const syncRevFromServer = useSession((s) => s.syncRevFromServer)
+  const setConflict = useSession((s) => s.setConflict)
   const mutation = useSavePageEditMutation()
 
   const timerByPage = useRef<Map<number, ReturnType<typeof setTimeout>>>(
@@ -59,9 +62,7 @@ export function useAutosave() {
   const inFlight = useRef<Set<number>>(new Set())
   const pendingAfterFlight = useRef<Set<number>>(new Set())
   const lastSavedContent = useRef<Map<number, string>>(new Map())
-  const savePageRef = useRef<(pageId: number, retry?: boolean) => Promise<void>>(
-    async () => {},
-  )
+  const savePageRef = useRef<(pageId: number) => Promise<void>>(async () => {})
 
   const scheduleSave = (pageId: number) => {
     const existing = timerByPage.current.get(pageId)
@@ -73,7 +74,7 @@ export function useAutosave() {
     timerByPage.current.set(pageId, timer)
   }
 
-  savePageRef.current = async (pageId: number, allowConflictRetry = true) => {
+  savePageRef.current = async (pageId: number) => {
     if (inFlight.current.has(pageId)) {
       pendingAfterFlight.current.add(pageId)
       return
@@ -81,10 +82,10 @@ export function useAutosave() {
 
     const current = useSession.getState().pages[pageId]
     if (!current?.dirty) return
+    if (current.saveStatus === 'conflict') return
 
     const contentFp = contentFingerprint(current.edit)
     if (lastSavedContent.current.get(pageId) === contentFp) {
-      // Content already on server — clear dirty without another PUT.
       markSaved(pageId, current.edit)
       return
     }
@@ -111,14 +112,10 @@ export function useAutosave() {
         return
       }
 
-      if (err instanceof ApiError && err.status === 409 && allowConflictRetry) {
+      if (err instanceof ApiError && err.status === 409) {
         try {
           const latest = await api.getPageEdit(pageId)
-          syncRevFromServer(pageId, latest.rev)
-          inFlight.current.delete(pageId)
-          skipFlush = true
-          await savePageRef.current(pageId, false)
-          return
+          setConflict(pageId, latest.edit)
         } catch (resyncErr: unknown) {
           const msg =
             resyncErr instanceof ApiError && resyncErr.status === 503
@@ -127,18 +124,16 @@ export function useAutosave() {
                 ? resyncErr.message
                 : 'Kayıt çakışması çözülemedi — tekrar deneyin'
           markSaveError(pageId, msg)
-          skipFlush = true
-          return
         }
+        skipFlush = true
+        return
       }
 
       const msg =
         err instanceof ApiError
-          ? err.status === 409
-            ? 'Kayıt çakışması — sunucu ile uyuşmadı; tekrar kaydedin'
-            : err.status === 503
-              ? 'Kayıt servisi şu an kapalı — değişiklikleriniz yerelde duruyor'
-              : err.message
+          ? err.status === 503
+            ? 'Kayıt servisi şu an kapalı — değişiklikleriniz yerelde duruyor'
+            : err.message
           : err instanceof Error
             ? err.message
             : 'Kayıt başarısız'
@@ -151,7 +146,7 @@ export function useAutosave() {
       if (pendingAfterFlight.current.has(pageId)) {
         pendingAfterFlight.current.delete(pageId)
         const again = useSession.getState().pages[pageId]
-        if (again?.dirty) scheduleSave(pageId)
+        if (again?.dirty && again.saveStatus !== 'conflict') scheduleSave(pageId)
         return
       }
 
@@ -159,9 +154,9 @@ export function useAutosave() {
       if (
         again?.dirty &&
         again.saveStatus !== 'error' &&
+        again.saveStatus !== 'conflict' &&
         lastSavedContent.current.get(pageId) !== contentFingerprint(again.edit)
       ) {
-        // Debounce — never tight-loop on stillDirty from key-order mismatches.
         scheduleSave(pageId)
       }
     }
@@ -173,6 +168,7 @@ export function useAutosave() {
     const pages = useSession.getState().pages
     for (const [idStr, page] of Object.entries(pages)) {
       if (!page.dirty) continue
+      if (page.saveStatus === 'conflict') continue
       const pageId = Number(idStr)
       const fp = contentFingerprint(page.edit)
       if (lastSavedContent.current.get(pageId) === fp) continue
@@ -202,7 +198,7 @@ export function useAutosave() {
     }
     const cur = useSession.getState().pages[pageId]
     if (!cur) return
-    // Force dirty so a stuck error state still attempts PUT.
+    if (cur.saveStatus === 'conflict') return
     if (!cur.dirty) {
       useSession.setState((s) => {
         const page = s.pages[pageId]
@@ -215,7 +211,7 @@ export function useAutosave() {
         }
       })
     }
-    void savePageRef.current(pageId, true)
+    void savePageRef.current(pageId)
   }
 
   return { retrySave }

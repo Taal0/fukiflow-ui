@@ -10,6 +10,19 @@ import type {
   PageSummary,
 } from './types'
 
+/** Optional absolute API origin for desktop / remote packaging.
+ * Empty (default) → same-origin `/api/...` (Vite proxy in dev).
+ * Example: `VITE_API_BASE=http://127.0.0.1:8000`
+ */
+const API_BASE = String(import.meta.env.VITE_API_BASE ?? '')
+  .trim()
+  .replace(/\/$/, '')
+
+export function apiUrl(path: string): string {
+  if (!path.startsWith('/')) path = `/${path}`
+  return API_BASE ? `${API_BASE}${path}` : path
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -35,7 +48,7 @@ function errorDetail(body: unknown, fallback: string): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     ...init,
     headers: {
       Accept: 'application/json',
@@ -60,7 +73,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
-  const res = await fetch(path, init)
+  const res = await fetch(apiUrl(path), init)
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -78,8 +91,15 @@ async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
 }
 
 export function fontFileUrl(font: FontInfo): string {
-  if (font.url) return font.url
-  return `/api/fonts/${encodeURIComponent(font.key)}/file`
+  if (font.url) {
+    // Absolute or already-rooted asset URLs pass through; relative API paths
+    // get the configured base for desktop packaging.
+    if (/^https?:\/\//i.test(font.url) || font.url.startsWith('data:')) {
+      return font.url
+    }
+    return apiUrl(font.url.startsWith('/') ? font.url : `/${font.url}`)
+  }
+  return apiUrl(`/api/fonts/${encodeURIComponent(font.key)}/file`)
 }
 
 export interface TypesetBody {
@@ -170,21 +190,24 @@ export const api = {
     }),
 
   getPageEdit: (pageId: number) =>
-    request<{ rev: number; edit: PageEdit }>(
+    request<{ rev: number; edit: PageEdit; author?: string | null }>(
       `/api/pages/${pageId}/edit`,
     ),
 
   putPageEdit: (
     pageId: number,
-    body: { rev: number; edit: PageEdit },
+    body: { rev: number; edit: PageEdit; user_id?: string | null },
     init?: { signal?: AbortSignal },
   ) =>
-    request<{ rev: number; edit: PageEdit }>(`/api/pages/${pageId}/edit`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: init?.signal,
-    }),
+    request<{ rev: number; edit: PageEdit; author?: string | null }>(
+      `/api/pages/${pageId}/edit`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: init?.signal,
+      },
+    ),
 
   deletePageEdit: (pageId: number) =>
     request<{ ok: boolean; deleted: boolean }>(`/api/pages/${pageId}/edit`, {

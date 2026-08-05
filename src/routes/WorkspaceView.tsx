@@ -87,6 +87,8 @@ export function WorkspaceView() {
   }, [pageQ.data, selectedPageId, hydrateEdit])
 
   const { retrySave } = useAutosave()
+  const resolveConflictTakeServer = useSession((s) => s.resolveConflictTakeServer)
+  const resolveConflictKeepMine = useSession((s) => s.resolveConflictKeepMine)
 
   const {
     pending: typesetPending,
@@ -239,6 +241,15 @@ export function WorkspaceView() {
         }}
         onRetrySave={() => {
           if (selectedPageId != null) retrySave(selectedPageId)
+        }}
+        onConflictTakeServer={() => {
+          if (selectedPageId != null) resolveConflictTakeServer(selectedPageId)
+        }}
+        onConflictKeepMine={() => {
+          if (selectedPageId == null) return
+          resolveConflictKeepMine(selectedPageId)
+          // Keep-mine bumps rev then we immediately PUT local content.
+          retrySave(selectedPageId)
         }}
         onOpenShortcuts={() => setShortcutsOpen(true)}
       />

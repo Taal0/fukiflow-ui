@@ -30,6 +30,11 @@ export interface PageSession {
   dirty: boolean
   saveStatus: SaveStatus
   saveError: string | null
+  /**
+   * Pending 409: local overlay is still shown; ``server`` is the remote copy.
+   * User chooses take-server or keep-mine.
+   */
+  conflictServer: PageEdit | null
   /** Ephemeral typeset results — not part of the overlay. */
   layoutsByBubble: Record<number, BubbleLayout>
   textLayers: Layer[] | null
@@ -111,8 +116,12 @@ interface SessionState {
   markSaveError: (pageId: number, message: string) => void
   /** Keep local overlay content; adopt server rev after a 409 so retry can succeed. */
   syncRevFromServer: (pageId: number, rev: number) => void
-  /** After 409 — adopt server edit and stay dirty so user can retry. */
-  adoptServerEdit: (pageId: number, edit: PageEdit) => void
+  /** Surface a 409: keep local edit visible, stash server copy for resolution. */
+  setConflict: (pageId: number, serverEdit: PageEdit) => void
+  /** Resolve 409 by replacing local overlay with the server copy. */
+  resolveConflictTakeServer: (pageId: number) => void
+  /** Resolve 409 by keeping local overlay and bumping rev to server's. */
+  resolveConflictKeepMine: (pageId: number) => void
 
   undo: (pageId: number) => void
   redo: (pageId: number) => void
@@ -135,6 +144,7 @@ function emptyPage(): PageSession {
     dirty: false,
     saveStatus: 'idle',
     saveError: null,
+    conflictServer: null,
     layoutsByBubble: {},
     textLayers: null,
     undoPast: [],
@@ -265,8 +275,15 @@ function applyEditMutation(
       ...cur,
       edit: nextEdit,
       dirty: true,
-      saveStatus: cur.saveStatus === 'error' ? 'error' : 'idle',
-      saveError: cur.saveStatus === 'error' ? cur.saveError : null,
+      // Keep conflict/error banners visible while the user keeps editing.
+      saveStatus:
+        cur.saveStatus === 'error' || cur.saveStatus === 'conflict'
+          ? cur.saveStatus
+          : 'idle',
+      saveError:
+        cur.saveStatus === 'error' || cur.saveStatus === 'conflict'
+          ? cur.saveError
+          : null,
       undoPast,
       undoFuture,
       lastUndoCoalesce,
@@ -329,6 +346,7 @@ export const useSession = create<SessionState>((set, get) => ({
             dirty: false,
             saveStatus: next.rev > 0 ? 'saved' : 'idle',
             saveError: null,
+            conflictServer: null,
             hydrated: true,
             undoPast: cur.hydrated ? cur.undoPast : [],
             undoFuture: cur.hydrated ? cur.undoFuture : [],
@@ -351,6 +369,7 @@ export const useSession = create<SessionState>((set, get) => ({
             dirty: false,
             saveStatus: 'saved',
             saveError: null,
+            conflictServer: null,
             hydrated: true,
             undoPast: [],
             undoFuture: [],
@@ -637,6 +656,7 @@ export const useSession = create<SessionState>((set, get) => ({
             dirty: stillDirty,
             saveStatus: stillDirty ? 'idle' : 'saved',
             saveError: null,
+            conflictServer: null,
             hydrated: true,
           },
         },
@@ -680,7 +700,7 @@ export const useSession = create<SessionState>((set, get) => ({
     })
   },
 
-  adoptServerEdit: (pageId, edit) => {
+  setConflict: (pageId, serverEdit) => {
     set((s) => {
       const cur = ensurePage(s.pages, pageId)
       return {
@@ -688,12 +708,58 @@ export const useSession = create<SessionState>((set, get) => ({
           ...s.pages,
           [pageId]: {
             ...cur,
-            edit: cloneEdit(edit),
+            conflictServer: cloneEdit(serverEdit),
             dirty: true,
-            saveStatus: 'error',
-            saveError: 'Başka bir kayıt çakıştı — tekrar kaydedin',
-            hydrated: true,
+            saveStatus: 'conflict',
+            saveError:
+              'Sunucuda daha yeni bir kayıt var — seçiminizi yapın',
+          },
+        },
+      }
+    })
+  },
+
+  resolveConflictTakeServer: (pageId) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      if (!cur.conflictServer) return {}
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: cloneEdit(cur.conflictServer),
+            conflictServer: null,
+            dirty: false,
+            saveStatus: 'saved',
+            saveError: null,
+            undoPast: [],
+            undoFuture: [],
             lastUndoCoalesce: undefined,
+            layoutsByBubble: {},
+            textLayers: null,
+            hydrated: true,
+          },
+        },
+      }
+    })
+  },
+
+  resolveConflictKeepMine: (pageId) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      const serverRev = cur.conflictServer?.rev
+      if (serverRev == null) return {}
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: { ...cur.edit, rev: serverRev },
+            conflictServer: null,
+            dirty: true,
+            saveStatus: 'idle',
+            saveError: null,
           },
         },
       }

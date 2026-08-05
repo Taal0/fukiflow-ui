@@ -1,5 +1,6 @@
 import type {
   BBox,
+  BubbleLayout,
   Layer,
   PageDoc,
   PageDetail,
@@ -14,16 +15,23 @@ import {
   sizeOverridesFromEdit,
   textOverridesFromEdit,
 } from '@/store/session'
-import type { TypesetBody } from '@/api/client'
+import { api, type TypesetBody } from '@/api/client'
 import { resolveBubbleFrame } from '@/lib/bubbleFrame'
 import { paintLayerId } from '@/api/types'
 
 const PAINT_Z_BASE = 150
 
+/** Minimal session fields needed to build a compose/working doc. */
+export type WorkingSessionBits = {
+  edit?: PageEdit
+  textLayers?: Layer[] | null
+  layoutsByBubble?: Record<number, BubbleLayout>
+}
+
 /** Merge session typeset + paint/inset overlays into the seed PageDoc. */
 export function buildWorkingDoc(
   seed: PageDoc,
-  session: PageSession | undefined,
+  session: WorkingSessionBits | PageSession | undefined,
 ): PageDoc {
   let doc = seed
   if (session?.textLayers?.length) {
@@ -37,18 +45,101 @@ export function buildWorkingDoc(
     })
     for (const leftover of byId.values()) layers.push(leftover)
     doc = { ...seed, layers }
-  } else if (session && Object.keys(session.layoutsByBubble).length) {
+  } else if (session && session.layoutsByBubble && Object.keys(session.layoutsByBubble).length) {
     doc = {
       ...seed,
       layers: seed.layers.map((layer) => {
         if (layer.kind !== 'text' || layer.bubble_id == null) return layer
-        const lay = session.layoutsByBubble[layer.bubble_id]
+        const lay = session.layoutsByBubble![layer.bubble_id]
         return lay ? { ...layer, layout: lay, enabled: lay.status === 'ok' } : layer
       }),
     }
   }
 
   return applyEditLayers(doc, session?.edit)
+}
+
+/** True when overlay fields require a typeset pass (not paint/inset alone). */
+export function editAffectsTypeset(edit: PageEdit | null | undefined): boolean {
+  if (!edit) return false
+  if (edit.page?.font) return true
+  for (const be of Object.values(edit.bubbles ?? {})) {
+    if (be.text !== undefined) return true
+    if (be.font) return true
+    if (be.font_px != null) return true
+    if (be.font_scale != null && be.font_scale !== 1) return true
+    if (be.frame) return true
+    if (be.leading != null) return true
+    if (be.align) return true
+  }
+  return false
+}
+
+function hasTypesetCache(session: WorkingSessionBits | undefined): boolean {
+  if (!session) return false
+  if (session.textLayers && session.textLayers.length > 0) return true
+  if (session.layoutsByBubble && Object.keys(session.layoutsByBubble).length > 0) {
+    return true
+  }
+  return false
+}
+
+/**
+ * Build compose payload for one page, preferring live session state when
+ * hydrated, otherwise the PageEdit from GET /pages/:id (DB).
+ *
+ * Unvisited pages previously fell back to the seed doc alone — that is what
+ * made chapter zip export the original instead of the saved overlay.
+ */
+export async function buildComposePayloadForPage(
+  pageDetail: PageDetail,
+  session: PageSession | undefined,
+): Promise<{
+  page_id: number
+  doc: PageDoc
+  off: string[]
+  font: string | null
+}> {
+  const seed = pageDetail.doc
+  // Prefer live session overlay when hydrated (covers unsaved edits).
+  // Otherwise use the PageEdit returned with the page (DB).
+  const edit: PageEdit =
+    session?.hydrated
+      ? session.edit
+      : (pageDetail.edit ?? {
+          rev: pageDetail.edit_rev ?? 0,
+          page: {},
+          bubbles: {},
+          paint: [],
+        })
+
+  let textLayers = session?.hydrated ? session.textLayers : null
+  let layoutsByBubble = session?.hydrated ? session.layoutsByBubble : {}
+
+  const bits: WorkingSessionBits = { edit, textLayers, layoutsByBubble }
+
+  if (editAffectsTypeset(edit) && !hasTypesetCache(bits)) {
+    const body = buildTypesetBody(pageDetail, { edit } as PageSession)
+    const result = await api.typeset(pageDetail.page.id, body)
+    textLayers = result.text_layers ?? null
+    layoutsByBubble = {}
+    for (const lay of result.layouts ?? []) {
+      layoutsByBubble[lay.bubble_id] = lay
+    }
+  }
+
+  const working: WorkingSessionBits = {
+    edit,
+    textLayers,
+    layoutsByBubble,
+  }
+
+  return {
+    page_id: pageDetail.page.id,
+    doc: buildWorkingDoc(seed, working),
+    off: [...disabledLayerIdsFromEdit(edit)],
+    font: pageFontFromEdit(edit),
+  }
 }
 
 /** Apply inset overrides + materialize paint layers (parity with server merge). */
@@ -207,7 +298,11 @@ export function disabledOffList(session: PageSession | undefined): string[] {
   return [...disabledLayerIdsFromEdit(session.edit)]
 }
 
-/** Payload shape for PUT /api/pages/:id/edit */
+/** Payload shape for PUT /api/pages/:id/edit.
+
+ * ``bubbles[].text`` is the shared letterer / translator write surface —
+ * a future translator screen will POST the same overlay fields.
+ */
 export function editPayload(edit: PageEdit): PageEdit {
   return {
     rev: edit.rev,
