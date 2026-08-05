@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { PageDoc, PageSummary } from '@/api/types'
 import { cleanLayerId, textLayerId } from '@/api/types'
 import {
@@ -20,6 +20,34 @@ function orderedBubbles(doc: PageDoc) {
   )
 }
 
+/** Single source of truth for workspace shortcuts (handlers + help panel). */
+export const WORKSPACE_SHORTCUTS: ReadonlyArray<{
+  keys: string
+  label: string
+  group: string
+}> = [
+  { group: 'Düzenleme', keys: '⌘Z', label: 'Geri al' },
+  { group: 'Düzenleme', keys: '⌘⇧Z / ⌘Y', label: 'İleri al' },
+  { group: 'Sayfa', keys: 'J / PageDown', label: 'Sonraki sayfa' },
+  { group: 'Sayfa', keys: 'K / PageUp', label: 'Önceki sayfa' },
+  { group: 'Görünüm', keys: '1', label: 'Sonuç' },
+  { group: 'Görünüm', keys: '2', label: 'Orijinal' },
+  { group: 'Görünüm', keys: '3', label: 'Yan yana' },
+  { group: 'Balon', keys: 'N / Tab', label: 'Sonraki balon' },
+  { group: 'Balon', keys: 'P / ⇧Tab', label: 'Önceki balon' },
+  { group: 'Balon', keys: 'D', label: 'Bitti işaretle' },
+  { group: 'Balon', keys: 'C', label: 'Clean katmanı aç/kapa' },
+  { group: 'Balon', keys: 'T', label: 'Metin katmanı aç/kapa' },
+  { group: 'Kutu', keys: '←↑↓→', label: 'Kutuyu 1 px kaydır' },
+  { group: 'Kutu', keys: '⇧ + ok', label: 'Kutuyu 10 px kaydır' },
+  { group: 'Fırça', keys: 'B', label: 'Boya fırçası' },
+  { group: 'Fırça', keys: 'R', label: 'Geri al fırçası' },
+  { group: 'Fırça', keys: '[ ]', label: 'Fırça boyutu −/+' },
+  { group: 'Fırça', keys: '⇧[ ⇧]', label: 'Fırça boyutu ±4' },
+  { group: 'Genel', keys: 'Esc', label: 'Fırçayı kapat / seçimi kaldır' },
+  { group: 'Genel', keys: '?', label: 'Kısayollar paneli' },
+]
+
 /** Global keyboard shortcuts for the letterer workspace. */
 export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const selectPage = useSession((s) => s.selectPage)
@@ -37,6 +65,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const pageSession = useSession((s) =>
     pageId != null ? s.pages[pageId] : undefined,
   )
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -49,6 +78,20 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
         target?.isContentEditable
 
       const mod = e.metaKey || e.ctrlKey
+
+      // Help panel — allow from fields too (? alone, or Shift+/).
+      if (!mod && (e.key === '?' || (e.key === '/' && e.shiftKey))) {
+        if (!inField || e.key === '?') {
+          e.preventDefault()
+          setShortcutsOpen((v) => !v)
+          return
+        }
+      }
+      if (e.key === 'Escape' && shortcutsOpen) {
+        e.preventDefault()
+        setShortcutsOpen(false)
+        return
+      }
 
       // Undo / redo — allow even from text fields (standard editor feel).
       if (mod && pageId != null && (e.key === 'z' || e.key === 'Z')) {
@@ -208,6 +251,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     pageSession?.edit,
     brush.mode,
     brush.radiusPx,
+    shortcutsOpen,
     selectPage,
     selectBubble,
     setViewMode,
@@ -219,4 +263,6 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     undo,
     redo,
   ])
+
+  return { shortcutsOpen, setShortcutsOpen }
 }

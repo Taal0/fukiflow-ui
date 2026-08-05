@@ -39,6 +39,7 @@ import {
   sizeOverridesFromEdit,
   useSession,
 } from '@/store/session'
+import { drawPaintStrokes } from '@/lib/paintStroke'
 import {
   composePage,
   fitTransform,
@@ -66,6 +67,9 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const offscreenRef = useRef<HTMLCanvasElement | null>(null)
+  /** Full compose without the in-progress brush stroke — reused while painting. */
+  const baseCompositeRef = useRef<HTMLCanvasElement | null>(null)
+  const baseCompositeValidRef = useRef(false)
   const transformRef = useRef<ViewTransform>({ scale: 1, offsetX: 0, offsetY: 0 })
   const rafRef = useRef<number | null>(null)
   const sourceRef = useRef<ImageBitmap | null>(null)
@@ -182,12 +186,34 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     liveFrameRef.current = null
   }, [selectedBubbleId, storedFrameKey])
 
+  // Invalidate cached page composite when layer/text/frame content changes.
+  // Pan, zoom, cursor, and live stroke reuse the base canvas.
+  useEffect(() => {
+    baseCompositeValidRef.current = false
+  }, [
+    ready,
+    fontsReady,
+    selectedBubbleId,
+    disabledLayerIds,
+    layoutsByBubble,
+    sizeOverrides,
+    fontOverride,
+    bubbleFontOverrides,
+    fonts,
+    detail,
+    selectedFrame,
+    liveFrameTick,
+    brushActive,
+    insetOverrideBubbleIds,
+  ])
+
   // Load source + clean layer bitmaps (asset identity only — not session edits)
   useEffect(() => {
     let cancelled = false
     setReady(false)
     setLoadError(null)
     userTransformedRef.current = false
+    baseCompositeValidRef.current = false
 
     const urls = [originalUrl, ...cleanUrlsKey.split('|').filter(Boolean)]
 
@@ -265,20 +291,32 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     ctx.fillRect(0, 0, cssW, cssH)
 
     const { width: pw, height: ph } = detail.doc.source
-    let off = offscreenRef.current
-    if (!off) {
-      off = document.createElement('canvas')
-      offscreenRef.current = off
+
+    const ensurePageCanvas = (
+      ref: { current: HTMLCanvasElement | null },
+    ): HTMLCanvasElement => {
+      let c = ref.current
+      if (!c) {
+        c = document.createElement('canvas')
+        ref.current = c
+      }
+      if (c.width !== pw || c.height !== ph) {
+        c.width = pw
+        c.height = ph
+        baseCompositeValidRef.current = false
+      }
+      return c
     }
-    if (off.width !== pw || off.height !== ph) {
-      off.width = pw
-      off.height = ph
-    }
+
+    const off = ensurePageCanvas(offscreenRef)
+    const base = ensurePageCanvas(baseCompositeRef)
     const octx = off.getContext('2d')
-    if (!octx) return
+    const bctx = base.getContext('2d')
+    if (!octx || !bctx) return
 
     const scale = transformRef.current.scale || 1
     const handleRadius = HANDLE_SCREEN_PX / scale
+    const liveStroke = liveStrokeRef.current
 
     const composeInput = {
       source,
@@ -303,14 +341,26 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
           ? (liveFrameRef.current ?? storedFrame)
           : null,
       handleRadius,
-      liveStroke: liveStrokeRef.current,
+      liveStroke: null as typeof liveStroke,
       insetOverrideBubbleIds,
+    }
+
+    // Rebuild base composite only when content changed; while brushing, blit
+    // base + live stroke instead of full recompose on every pointermove.
+    if (!baseCompositeValidRef.current) {
+      composePage(bctx, composeInput)
+      baseCompositeValidRef.current = true
+    }
+
+    octx.clearRect(0, 0, pw, ph)
+    octx.drawImage(base, 0, 0)
+    if (liveStroke) {
+      drawPaintStrokes(octx, [liveStroke], source)
     }
 
     const t = transformRef.current
 
     const drawComposedAt = (clipRight?: number) => {
-      composePage(octx, composeInput)
       ctx.save()
       if (clipRight != null) {
         ctx.beginPath()

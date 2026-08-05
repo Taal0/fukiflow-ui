@@ -35,6 +35,8 @@ function contentFingerprint(edit: PageEdit): string {
  * Serial per page: never abort an in-flight PUT. After success, if still dirty,
  * schedule another debounced save (never tight-loop in finally).
  * On 409: adopt server rev, keep local content, retry once.
+ *
+ * Returns ``retrySave`` for the toolbar when saveStatus is error.
  */
 export function useAutosave() {
   const dirtyKey = useSession((s) => {
@@ -119,9 +121,11 @@ export function useAutosave() {
           return
         } catch (resyncErr: unknown) {
           const msg =
-            resyncErr instanceof Error
-              ? resyncErr.message
-              : 'Kayıt çakışması çözülemedi'
+            resyncErr instanceof ApiError && resyncErr.status === 503
+              ? 'Kayıt servisi şu an kapalı — değişiklikleriniz yerelde duruyor'
+              : resyncErr instanceof Error
+                ? resyncErr.message
+                : 'Kayıt çakışması çözülemedi — tekrar deneyin'
           markSaveError(pageId, msg)
           skipFlush = true
           return
@@ -131,8 +135,10 @@ export function useAutosave() {
       const msg =
         err instanceof ApiError
           ? err.status === 409
-            ? 'Kayıt çakışması — tekrar denendi, yine olmadı'
-            : err.message
+            ? 'Kayıt çakışması — sunucu ile uyuşmadı; tekrar kaydedin'
+            : err.status === 503
+              ? 'Kayıt servisi şu an kapalı — değişiklikleriniz yerelde duruyor'
+              : err.message
           : err instanceof Error
             ? err.message
             : 'Kayıt başarısız'
@@ -186,4 +192,31 @@ export function useAutosave() {
       timerByPage.current.clear()
     }
   }, [])
+
+  /** Immediate retry after an error (skips debounce). */
+  const retrySave = (pageId: number) => {
+    const existing = timerByPage.current.get(pageId)
+    if (existing) {
+      clearTimeout(existing)
+      timerByPage.current.delete(pageId)
+    }
+    const cur = useSession.getState().pages[pageId]
+    if (!cur) return
+    // Force dirty so a stuck error state still attempts PUT.
+    if (!cur.dirty) {
+      useSession.setState((s) => {
+        const page = s.pages[pageId]
+        if (!page) return s
+        return {
+          pages: {
+            ...s.pages,
+            [pageId]: { ...page, dirty: true, saveError: null },
+          },
+        }
+      })
+    }
+    void savePageRef.current(pageId, true)
+  }
+
+  return { retrySave }
 }

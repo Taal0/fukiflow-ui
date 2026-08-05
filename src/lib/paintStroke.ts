@@ -74,6 +74,27 @@ function stampCircle(
   ctx.fill()
 }
 
+/** Restore one circular stamp from source using a tight dirty rect. */
+function restoreStamp(
+  ctx: CanvasRenderingContext2D,
+  source: CanvasImageSource,
+  x: number,
+  y: number,
+  r: number,
+): void {
+  const pad = Math.ceil(r) + 1
+  const sx = Math.floor(x - pad)
+  const sy = Math.floor(y - pad)
+  const sw = pad * 2
+  const sh = pad * 2
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(x, y, r, 0, Math.PI * 2)
+  ctx.clip()
+  ctx.drawImage(source, sx, sy, sw, sh, sx, sy, sw, sh)
+  ctx.restore()
+}
+
 /** Draw committed + live paint strokes in page pixel space. */
 export function drawPaintStrokes(
   ctx: CanvasRenderingContext2D,
@@ -96,19 +117,9 @@ export function drawOneStroke(
 
   if (stroke.mode === 'restore') {
     if (!source) return
-    // Punch circular holes and fill from the original source.
     for (const p of pts) {
-      const x = p[0]!
-      const y = p[1]!
-      ctx.save()
-      ctx.beginPath()
-      ctx.arc(x, y, r, 0, Math.PI * 2)
-      ctx.clip()
-      // Source is full-page; draw at origin so clip shows the matching region.
-      ctx.drawImage(source, 0, 0)
-      ctx.restore()
+      restoreStamp(ctx, source, p[0]!, p[1]!, r)
     }
-    // Connect gaps between stamps with a thick restore line
     if (pts.length > 1) {
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1]!
@@ -121,12 +132,7 @@ export function drawOneStroke(
           const t = s / steps
           const x = a[0]! + (b[0]! - a[0]!) * t
           const y = a[1]! + (b[1]! - a[1]!) * t
-          ctx.save()
-          ctx.beginPath()
-          ctx.arc(x, y, r, 0, Math.PI * 2)
-          ctx.clip()
-          ctx.drawImage(source, 0, 0)
-          ctx.restore()
+          restoreStamp(ctx, source, x, y, r)
         }
       }
     }

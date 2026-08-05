@@ -13,6 +13,7 @@ import { BubbleList } from '@/components/BubbleList'
 import { MobileWarning } from '@/components/MobileWarning'
 import { OnboardingGuide } from '@/components/OnboardingGuide'
 import { PageGallery } from '@/components/PageGallery'
+import { ShortcutsHelp } from '@/components/ShortcutsHelp'
 import { Toolbar } from '@/components/Toolbar'
 import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
@@ -85,7 +86,7 @@ export function WorkspaceView() {
     )
   }, [pageQ.data, selectedPageId, hydrateEdit])
 
-  useAutosave()
+  const { retrySave } = useAutosave()
 
   const {
     pending: typesetPending,
@@ -191,7 +192,7 @@ export function WorkspaceView() {
     })
   }
 
-  useWorkspaceKeys({
+  const { shortcutsOpen, setShortcutsOpen } = useWorkspaceKeys({
     pages: pagesQ.data ?? [],
     doc: workingDetail?.doc,
     pageId: selectedPageId,
@@ -215,6 +216,10 @@ export function WorkspaceView() {
     <div className="relative flex h-full min-h-0 flex-col">
       <MobileWarning />
       <OnboardingGuide />
+      <ShortcutsHelp
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
       <Toolbar
         pageLabel={pageLabel}
         detail={workingDetail}
@@ -226,11 +231,16 @@ export function WorkspaceView() {
         saveStatus={pageSession?.saveStatus}
         saveError={pageSession?.saveError}
         dirty={pageSession?.dirty}
+        visionUnavailable={fontsUnavailable}
         onResetPage={() => void resetPage()}
         onAutoTypesetPage={() => {
           if (!workingDetail) return
           autoTypesetBubbles(workingDetail.doc.bubbles.map((b) => b.id))
         }}
+        onRetrySave={() => {
+          if (selectedPageId != null) retrySave(selectedPageId)
+        }}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
       />
 
       {(fontsUnavailable || catalogError) && (
@@ -238,8 +248,9 @@ export function WorkspaceView() {
           {catalogError && <span>{catalogError}. </span>}
           {fontsUnavailable && (
             <span>
-              Dizgi servisi şu an kapalı — görüntüleme çalışmaya devam ediyor;
-              düzenleme ve indirme için servisi başlatın.
+              Dizgi servisi şu an kapalı (503) — görüntüleme çalışmaya devam
+              ediyor; oto dizgi ve indirme için servisi başlatın. Kayıtlar
+              yerelde bekler.
             </span>
           )}
         </div>

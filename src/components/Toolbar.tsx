@@ -21,8 +21,12 @@ interface ToolbarProps {
   saveStatus?: SaveStatus
   saveError?: string | null
   dirty?: boolean
+  /** Vision/fonts API returned 503 — disable typeset/download. */
+  visionUnavailable?: boolean
   onResetPage?: () => void
   onAutoTypesetPage?: () => void
+  onRetrySave?: () => void
+  onOpenShortcuts?: () => void
 }
 
 export function Toolbar({
@@ -36,8 +40,11 @@ export function Toolbar({
   saveStatus,
   saveError,
   dirty,
+  visionUnavailable,
   onResetPage,
   onAutoTypesetPage,
+  onRetrySave,
+  onOpenShortcuts,
 }: ToolbarProps) {
   const viewMode = useSession((s) => s.viewMode)
   const setViewMode = useSession((s) => s.setViewMode)
@@ -52,8 +59,10 @@ export function Toolbar({
   const [progress, setProgress] = useState<string | null>(null)
   const [dlError, setDlError] = useState<string | null>(null)
 
+  const composeBlocked = visionUnavailable === true
+
   const downloadPage = async () => {
-    if (!detail) return
+    if (!detail || composeBlocked) return
     setBusy('page')
     setDlError(null)
     setProgress('Sayfa hazırlanıyor…')
@@ -80,7 +89,7 @@ export function Toolbar({
   }
 
   const downloadChapter = async () => {
-    if (!chapterSlug || !pages.length) return
+    if (!chapterSlug || !pages.length || composeBlocked) return
     setBusy('chapter')
     setDlError(null)
     setProgress(`0 / ${pages.length}`)
@@ -153,6 +162,17 @@ export function Toolbar({
             {saveLabel}
           </span>
         )}
+        {saveStatus === 'error' && onRetrySave && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[11px] text-[var(--color-danger)]"
+            onClick={() => onRetrySave()}
+          >
+            Tekrar kaydet
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -173,9 +193,15 @@ export function Toolbar({
           type="button"
           variant="outline"
           size="sm"
-          disabled={!detail || typesetPending || busy != null}
+          disabled={
+            !detail || typesetPending || busy != null || composeBlocked
+          }
           onClick={() => onAutoTypesetPage?.()}
-          title="Sayfadaki tüm balonları mevcut kutu/punto ile yeniden diz"
+          title={
+            composeBlocked
+              ? 'Dizgi servisi kapalı'
+              : 'Sayfadaki tüm balonları mevcut kutu/punto ile yeniden diz'
+          }
         >
           Oto dizgi
         </Button>
@@ -183,8 +209,13 @@ export function Toolbar({
           type="button"
           variant="outline"
           size="sm"
-          disabled={!detail || busy != null}
+          disabled={!detail || busy != null || composeBlocked}
           onClick={() => void downloadPage()}
+          title={
+            composeBlocked
+              ? 'Dizgi servisi kapalı; indirme yapılamıyor'
+              : undefined
+          }
         >
           Sayfa indir
         </Button>
@@ -192,10 +223,29 @@ export function Toolbar({
           type="button"
           variant="outline"
           size="sm"
-          disabled={!chapterSlug || !pages.length || busy != null}
+          disabled={
+            !chapterSlug ||
+            !pages.length ||
+            busy != null ||
+            composeBlocked
+          }
           onClick={() => void downloadChapter()}
+          title={
+            composeBlocked
+              ? 'Dizgi servisi kapalı; indirme yapılamıyor'
+              : undefined
+          }
         >
           Bölüm zip
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => onOpenShortcuts?.()}
+          title="Klavye kısayolları (?)"
+        >
+          ?
         </Button>
         <Button
           type="button"
