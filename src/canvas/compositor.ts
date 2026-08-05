@@ -6,9 +6,11 @@ import type {
   Layer,
   LayerAsset,
   PageDoc,
+  PaintStroke,
   Point,
 } from '@/api/types'
 import { frameHandlePoints } from '@/lib/bubbleFrame'
+import { drawPaintStrokes } from '@/lib/paintStroke'
 import { resolveFontFamily } from './useFontFace'
 
 export interface ComposeInput {
@@ -27,6 +29,10 @@ export interface ComposeInput {
   selectedFrame?: BBox | null
   /** Screen-space handle size converted to page px. */
   handleRadius?: number
+  /** Live in-progress stroke (not yet committed to edit.paint). */
+  liveStroke?: PaintStroke | null
+  /** Bubble ids whose clean inset was overridden — redraw fill from polygon. */
+  insetOverrideBubbleIds?: Set<number>
 }
 
 const bitmapCache = new Map<string, Promise<ImageBitmap>>()
@@ -206,6 +212,26 @@ function drawSelection(
   ctx.restore()
 }
 
+function drawCleanPolygonFill(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  bubble: Bubble | undefined,
+): void {
+  const color = layer.fill_color
+  const poly = layer.mask?.polygon ?? bubble?.polygon
+  if (!color || !poly?.length) return
+  ctx.save()
+  ctx.beginPath()
+  ctx.moveTo(poly[0]![0]!, poly[0]![1]!)
+  for (let i = 1; i < poly.length; i++) {
+    ctx.lineTo(poly[i]![0]!, poly[i]![1]!)
+  }
+  ctx.closePath()
+  ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`
+  ctx.fill()
+  ctx.restore()
+}
+
 /** Draw composed page into an offscreen or visible canvas (page pixel space). */
 export function composePage(
   ctx: CanvasRenderingContext2D,
@@ -219,20 +245,33 @@ export function composePage(
     (a, b) => (a.z ?? 0) - (b.z ?? 0) || a.id.localeCompare(b.id),
   )
   const assetById = new Map(input.layerAssets.map((a) => [a.layer_id, a]))
+  const bubbleById = new Map(input.doc.bubbles.map((b) => [b.id, b]))
+  const insetOverrides = input.insetOverrideBubbleIds ?? new Set<number>()
 
   for (const layer of layers) {
     if (layer.enabled === false) continue
     if (input.disabledLayerIds.has(layer.id)) continue
 
     if (layer.kind === 'clean') {
+      const bid = layer.bubble_id
+      if (bid != null && insetOverrides.has(bid)) {
+        drawCleanPolygonFill(ctx, layer, bubbleById.get(bid))
+        continue
+      }
       const asset = assetById.get(layer.id)
       const bmp = asset ? input.bitmaps.get(asset.url) : undefined
       if (asset && bmp) {
         ctx.drawImage(bmp, asset.offset_x, asset.offset_y)
       }
+    } else if (layer.kind === 'paint') {
+      drawPaintStrokes(ctx, layer.strokes ?? [], input.source)
     } else if (layer.kind === 'text') {
       drawTextLayer(ctx, layer, input)
     }
+  }
+
+  if (input.liveStroke) {
+    drawPaintStrokes(ctx, [input.liveStroke], input.source)
   }
 
   if (input.selectedBubbleId != null) {

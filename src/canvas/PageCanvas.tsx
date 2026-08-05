@@ -6,7 +6,15 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import type { BBox, BubbleLayout, FontInfo, PageDetail, ViewMode } from '@/api/types'
+import type {
+  BBox,
+  BubbleLayout,
+  FontInfo,
+  PageDetail,
+  PaintStroke,
+  Point,
+  ViewMode,
+} from '@/api/types'
 import {
   clampFrame,
   cursorForFrameHandle,
@@ -17,6 +25,13 @@ import {
   resolveBubbleFrame,
   type FrameHandle,
 } from '@/lib/bubbleFrame'
+import {
+  clampPointToBBox,
+  nextStrokeId,
+  paintClipBBox,
+  sampleBitmapColor,
+  shouldAppendPoint,
+} from '@/lib/paintStroke'
 import {
   bubbleFontsFromEdit,
   disabledLayerIdsFromEdit,
@@ -39,7 +54,7 @@ interface PageCanvasProps {
   fonts: FontInfo[]
 }
 
-type DragMode = 'pan' | 'split' | 'frame' | null
+type DragMode = 'pan' | 'split' | 'frame' | 'brush' | null
 
 const EMPTY_SET = new Set<string>()
 const EMPTY_NUM_RECORD: Record<number, number> = {}
@@ -72,6 +87,10 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   /** Live frame while dragging (page px) — avoids undo spam mid-drag. */
   const liveFrameRef = useRef<BBox | null>(null)
   const [liveFrameTick, setLiveFrameTick] = useState(0)
+  /** In-progress brush stroke (committed on pointerup as one undo step). */
+  const liveStrokeRef = useRef<PaintStroke | null>(null)
+  const [liveStrokeTick, setLiveStrokeTick] = useState(0)
+  const [cursorPage, setCursorPage] = useState<Point | null>(null)
 
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -92,14 +111,26 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
   const setSplitRatio = useSession((s) => s.setSplitRatio)
   const selectBubble = useSession((s) => s.selectBubble)
   const setFrame = useSession((s) => s.setFrame)
+  const appendPaintStroke = useSession((s) => s.appendPaintStroke)
+  const setBrushColor = useSession((s) => s.setBrushColor)
+  const brush = useSession((s) => s.brush)
   const pageSession = useSession((s) => s.pages[pageId])
 
   const selectedBubbleId = pageSession?.selectedBubbleId ?? null
   const edit = pageSession?.edit
+  const brushActive = brush.mode !== 'off'
   const disabledLayerIds = useMemo(
     () => (edit ? disabledLayerIdsFromEdit(edit) : EMPTY_SET),
     [edit],
   )
+  const insetOverrideBubbleIds = useMemo(() => {
+    const set = new Set<number>()
+    if (!edit) return set
+    for (const [k, be] of Object.entries(edit.bubbles)) {
+      if (be.inset != null) set.add(Number(k))
+    }
+    return set
+  }, [edit])
   const layoutsByBubble = pageSession?.layoutsByBubble ?? EMPTY_LAYOUTS
   const sizeOverrides = useMemo(
     () => (edit ? sizeOverridesFromEdit(edit) : EMPTY_NUM_RECORD),
@@ -264,11 +295,16 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       // No movable box for `editor`-status bubbles — vision never typesets
       // them automatically, so a draggable frame would be interactive-looking
       // but functionally dead. Fall back to the plain polygon outline.
+      // Also hide frame handles while brushing.
       selectedFrame:
-        selectedBubbleId != null && selectedBubble?.clean_status !== 'editor'
+        !brushActive &&
+        selectedBubbleId != null &&
+        selectedBubble?.clean_status !== 'editor'
           ? (liveFrameRef.current ?? storedFrame)
           : null,
       handleRadius,
+      liveStroke: liveStrokeRef.current,
+      insetOverrideBubbleIds,
     }
 
     const t = transformRef.current
@@ -284,6 +320,16 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       ctx.translate(t.offsetX, t.offsetY)
       ctx.scale(t.scale, t.scale)
       ctx.drawImage(off, 0, 0)
+      // Brush size cursor (page-space circle)
+      if (brushActive && cursorPage) {
+        ctx.beginPath()
+        ctx.arc(cursorPage[0]!, cursorPage[1]!, brush.radiusPx, 0, Math.PI * 2)
+        ctx.strokeStyle = brush.mode === 'restore' ? '#2a6fdb' : '#b83a26'
+        ctx.lineWidth = Math.max(1, 1.25 / t.scale)
+        ctx.setLineDash([4 / t.scale, 3 / t.scale])
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
       ctx.restore()
     }
 
@@ -353,6 +399,12 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     detail,
     selectedFrame,
     liveFrameTick,
+    liveStrokeTick,
+    brushActive,
+    brush.mode,
+    brush.radiusPx,
+    cursorPage,
+    insetOverrideBubbleIds,
     schedulePaint,
   ])
 
@@ -428,6 +480,52 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       return
     }
 
+    // Brush stroke — requires a selected bubble; clips to its bbox.
+    if (e.button === 0 && brushActive) {
+      const page = screenToPage(x, y, transformRef.current)
+      setCursorPage([page.x, page.y])
+      if (!selectedBubble) {
+        // Select under cursor if none selected.
+        const hit = hitTestBubble(detail.doc.bubbles, page.x, page.y)
+        if (hit) selectBubble(hit.id)
+        return
+      }
+      const clip = paintClipBBox(selectedBubble.bbox, brush.radiusPx)
+      const pt = clampPointToBBox(page.x, page.y, clip)
+      let color = brush.color
+      if (brush.mode === 'fill') {
+        const src = sourceRef.current
+        if (src) {
+          color = sampleBitmapColor(src, pt[0]!, pt[1]!)
+          setBrushColor(color)
+        } else {
+          color = color ?? [255, 255, 255]
+        }
+      }
+      liveStrokeRef.current = {
+        id: nextStrokeId(),
+        bubble_id: selectedBubble.id,
+        mode: brush.mode === 'restore' ? 'restore' : 'fill',
+        color: brush.mode === 'fill' ? (color ?? [255, 255, 255]) : undefined,
+        radius_px: brush.radiusPx,
+        points: [pt],
+      }
+      dragRef.current = {
+        mode: 'brush',
+        startX: page.x,
+        startY: page.y,
+        originX: transformRef.current.offsetX,
+        originY: transformRef.current.offsetY,
+        originSplit: splitRatio,
+        bubbleId: selectedBubble.id,
+        moved: false,
+      }
+      e.currentTarget.setPointerCapture(e.pointerId)
+      setLiveStrokeTick((t) => t + 1)
+      setCursor('crosshair')
+      return
+    }
+
     if (
       e.button === 0 &&
       selectedBubble &&
@@ -474,9 +572,20 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
+    if (brushActive) {
+      const page = screenToPage(x, y, transformRef.current)
+      setCursorPage([page.x, page.y])
+    }
+
     const drag = dragRef.current
     if (!drag) {
-      if (selectedBubble && storedFrame && selectedBubble.clean_status !== 'editor') {
+      if (brushActive) {
+        setCursor(selectedBubble ? 'crosshair' : 'cell')
+      } else if (
+        selectedBubble &&
+        storedFrame &&
+        selectedBubble.clean_status !== 'editor'
+      ) {
         const page = screenToPage(x, y, transformRef.current)
         setCursor(cursorForFrameHandle(frameHitAt(page.x, page.y)))
       } else {
@@ -487,6 +596,20 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
 
     if (drag.mode === 'split') {
       setSplitRatio(x / Math.max(1, rect.width))
+      return
+    }
+
+    if (drag.mode === 'brush' && liveStrokeRef.current && selectedBubble) {
+      const page = screenToPage(x, y, transformRef.current)
+      const clip = paintClipBBox(selectedBubble.bbox, brush.radiusPx)
+      const pt = clampPointToBBox(page.x, page.y, clip)
+      const stroke = liveStrokeRef.current
+      if (shouldAppendPoint(stroke.points, pt, stroke.radius_px)) {
+        stroke.points = [...stroke.points, pt]
+        drag.moved = true
+        setLiveStrokeTick((t) => t + 1)
+        schedulePaint()
+      }
       return
     }
 
@@ -529,6 +652,17 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     } catch {
       /* ignore */
+    }
+
+    if (drag?.mode === 'brush') {
+      const stroke = liveStrokeRef.current
+      liveStrokeRef.current = null
+      setLiveStrokeTick((t) => t + 1)
+      if (stroke && stroke.points.length > 0) {
+        appendPaintStroke(pageId, stroke)
+      }
+      setCursor(brushActive ? 'crosshair' : 'grab')
+      return
     }
 
     if (drag?.mode === 'frame' && drag.bubbleId != null) {
@@ -602,15 +736,23 @@ export function PageCanvas({ detail, fonts }: PageCanvasProps) {
 }
 
 function ViewModeHint({ mode }: { mode: ViewMode }) {
+  const brush = useSession((s) => s.brush)
   const label =
     mode === 'composed'
       ? 'Sonuç'
       : mode === 'original'
         ? 'Orijinal'
         : 'Yan yana — ayıracı sürükleyin'
+  const tool =
+    brush.mode === 'fill'
+      ? ` · fırça boya ${brush.radiusPx}px`
+      : brush.mode === 'restore'
+        ? ` · fırça geri al ${brush.radiusPx}px`
+        : ' · kutuyu taşı/boyutlandır · Oto dizgi'
   return (
     <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-md bg-[var(--color-surface-raised)]/90 px-3 py-1 text-xs text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
-      {label} · kutuyu taşı/boyutlandır · Oto dizgi: yazıyı kutuya diz
+      {label}
+      {tool}
     </div>
   )
 }

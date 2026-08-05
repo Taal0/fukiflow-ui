@@ -1,14 +1,26 @@
 import { create } from 'zustand'
 import type {
+  BrushState,
   BubbleEdit,
   BubbleLayout,
   Layer,
   PageEdit,
+  PaintStroke,
   SaveStatus,
   ViewMode,
 } from '@/api/types'
+import { BRUSH_PRESETS } from '@/lib/paintStroke'
 
 const UNDO_CAP = 50
+/** Consecutive same-key edits (e.g. keystrokes in one bubble) within this
+ * window collapse into a single undo step instead of one-per-keystroke. */
+const UNDO_COALESCE_MS = 1200
+
+export const DEFAULT_BRUSH: BrushState = {
+  mode: 'off',
+  radiusPx: BRUSH_PRESETS[2] ?? 8,
+  color: null,
+}
 
 export interface PageSession {
   selectedBubbleId: number | null
@@ -25,6 +37,9 @@ export interface PageSession {
   undoFuture: PageEdit[]
   /** Set after first hydrate from GET /pages/:id (or explicit load). */
   hydrated: boolean
+  /** Last coalesced undo group (e.g. `text:<bubbleId>`) — lets rapid same-key
+   * edits (keystrokes) collapse into one undo step instead of one per call. */
+  lastUndoCoalesce?: { key: string; at: number }
 }
 
 interface SessionState {
@@ -34,10 +49,16 @@ interface SessionState {
   splitRatio: number
   pages: Record<number, PageSession>
   guideDismissed: boolean
+  /** Ephemeral brush tool (not persisted in PageEdit). */
+  brush: BrushState
 
   setChapterSlug: (slug: string | null) => void
   selectPage: (pageId: number | null) => void
   selectBubble: (bubbleId: number | null) => void
+
+  setBrushMode: (mode: BrushState['mode']) => void
+  setBrushRadius: (radiusPx: number) => void
+  setBrushColor: (color: [number, number, number] | null) => void
 
   /** Load server overlay into session (no-op if dirty local edits exist). */
   hydrateEdit: (pageId: number, edit: PageEdit | null | undefined, rev?: number) => void
@@ -67,6 +88,9 @@ interface SessionState {
     frame: BubbleEdit['frame'] | null,
     opts?: { undo?: boolean },
   ) => void
+  setInset: (pageId: number, bubbleId: number, inset: number | null) => void
+  appendPaintStroke: (pageId: number, stroke: PaintStroke) => void
+  clearPaintForBubble: (pageId: number, bubbleId: number) => void
   setPageFont: (pageId: number, fontKey: string | null) => void
   toggleLayer: (pageId: number, layerId: string) => void
   setLayerEnabled: (pageId: number, layerId: string, enabled: boolean) => void
@@ -116,6 +140,7 @@ function emptyPage(): PageSession {
     undoPast: [],
     undoFuture: [],
     hydrated: false,
+    lastUndoCoalesce: undefined,
   }
 }
 
@@ -152,9 +177,9 @@ function bubbleKey(id: number): string {
   return String(id)
 }
 
-/** Infer bubble id from layer id like cln_3 / txt_3. */
+/** Infer bubble id from layer id like cln_3 / txt_3 / pnt_3. */
 function bubbleIdFromLayer(layerId: string): number | null {
-  const m = /^(?:cln|txt)_(\d+)$/.exec(layerId)
+  const m = /^(?:cln|txt|pnt)_(\d+)$/.exec(layerId)
   return m ? Number(m[1]) : null
 }
 
@@ -207,15 +232,33 @@ function applyEditMutation(
   pages: Record<number, PageSession>,
   pageId: number,
   mutate: Mutator,
-  opts?: { undo?: boolean },
+  opts?: { undo?: boolean; coalesceKey?: string },
 ): Record<number, PageSession> {
   const cur = ensurePage(pages, pageId)
   const recordUndo = opts?.undo !== false
   const nextEdit = mutate(cur.edit)
-  const undoPast = recordUndo
-    ? [...cur.undoPast, cloneEdit(cur.edit)].slice(-UNDO_CAP)
-    : cur.undoPast
-  const undoFuture = recordUndo ? [] : cur.undoFuture
+
+  const now = Date.now()
+  const coalesceKey = opts?.coalesceKey
+  // Same key (e.g. same bubble's text field) within the window → this edit
+  // joins the in-progress undo group instead of pushing a new snapshot.
+  const coalescing =
+    recordUndo &&
+    coalesceKey != null &&
+    cur.lastUndoCoalesce?.key === coalesceKey &&
+    now - cur.lastUndoCoalesce.at < UNDO_COALESCE_MS
+
+  const undoPast =
+    recordUndo && !coalescing
+      ? [...cur.undoPast, cloneEdit(cur.edit)].slice(-UNDO_CAP)
+      : cur.undoPast
+  const undoFuture = recordUndo && !coalescing ? [] : cur.undoFuture
+  const lastUndoCoalesce = recordUndo
+    ? coalesceKey != null
+      ? { key: coalesceKey, at: now }
+      : undefined
+    : cur.lastUndoCoalesce
+
   return {
     ...pages,
     [pageId]: {
@@ -226,6 +269,7 @@ function applyEditMutation(
       saveError: cur.saveStatus === 'error' ? cur.saveError : null,
       undoPast,
       undoFuture,
+      lastUndoCoalesce,
     },
   }
 }
@@ -237,6 +281,7 @@ export const useSession = create<SessionState>((set, get) => ({
   splitRatio: 0.5,
   pages: {},
   guideDismissed: readGuideDismissed(),
+  brush: { ...DEFAULT_BRUSH },
 
   setChapterSlug: (slug) => set({ chapterSlug: slug }),
 
@@ -255,6 +300,18 @@ export const useSession = create<SessionState>((set, get) => ({
       }
     })
   },
+
+  setBrushMode: (mode) =>
+    set((s) => ({ brush: { ...s.brush, mode } })),
+  setBrushRadius: (radiusPx) =>
+    set((s) => ({
+      brush: {
+        ...s.brush,
+        radiusPx: Math.max(1, Math.min(64, Math.round(radiusPx))),
+      },
+    })),
+  setBrushColor: (color) =>
+    set((s) => ({ brush: { ...s.brush, color } })),
 
   hydrateEdit: (pageId, edit, rev) => {
     set((s) => {
@@ -275,6 +332,7 @@ export const useSession = create<SessionState>((set, get) => ({
             hydrated: true,
             undoPast: cur.hydrated ? cur.undoPast : [],
             undoFuture: cur.hydrated ? cur.undoFuture : [],
+            lastUndoCoalesce: cur.hydrated ? cur.lastUndoCoalesce : undefined,
           },
         },
       }
@@ -296,6 +354,7 @@ export const useSession = create<SessionState>((set, get) => ({
             hydrated: true,
             undoPast: [],
             undoFuture: [],
+            lastUndoCoalesce: undefined,
             layoutsByBubble: {},
             textLayers: null,
           },
@@ -317,8 +376,11 @@ export const useSession = create<SessionState>((set, get) => ({
 
   setBubbleText: (pageId, bubbleId, text) => {
     set((s) => ({
-      pages: applyEditMutation(s.pages, pageId, (edit) =>
-        withBubblePatch(edit, bubbleId, { text }),
+      pages: applyEditMutation(
+        s.pages,
+        pageId,
+        (edit) => withBubblePatch(edit, bubbleId, { text }),
+        { coalesceKey: `text:${bubbleId}` },
       ),
     }))
   },
@@ -404,6 +466,37 @@ export const useSession = create<SessionState>((set, get) => ({
           }),
         opts,
       ),
+    }))
+  },
+
+  setInset: (pageId, bubbleId, inset) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => {
+        if (inset == null) {
+          return withBubblePatch(edit, bubbleId, { inset: null })
+        }
+        return withBubblePatch(edit, bubbleId, {
+          inset: Math.max(0, Math.min(64, Math.round(inset))),
+        })
+      }),
+    }))
+  },
+
+  appendPaintStroke: (pageId, stroke) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => ({
+        ...edit,
+        paint: [...(edit.paint ?? []), stroke],
+      })),
+    }))
+  },
+
+  clearPaintForBubble: (pageId, bubbleId) => {
+    set((s) => ({
+      pages: applyEditMutation(s.pages, pageId, (edit) => ({
+        ...edit,
+        paint: (edit.paint ?? []).filter((p) => p.bubble_id !== bubbleId),
+      })),
     }))
   },
 
@@ -600,6 +693,7 @@ export const useSession = create<SessionState>((set, get) => ({
             saveStatus: 'error',
             saveError: 'Başka bir kayıt çakıştı — tekrar kaydedin',
             hydrated: true,
+            lastUndoCoalesce: undefined,
           },
         },
       }
@@ -625,6 +719,8 @@ export const useSession = create<SessionState>((set, get) => ({
               0,
               UNDO_CAP,
             ),
+            // Don't let typing right after an undo silently coalesce into it.
+            lastUndoCoalesce: undefined,
             layoutsByBubble: {},
             textLayers: null,
           },
@@ -649,6 +745,7 @@ export const useSession = create<SessionState>((set, get) => ({
             saveError: null,
             undoPast: [...cur.undoPast, cloneEdit(cur.edit)].slice(-UNDO_CAP),
             undoFuture: cur.undoFuture.slice(1),
+            lastUndoCoalesce: undefined,
             layoutsByBubble: {},
             textLayers: null,
           },
@@ -695,6 +792,7 @@ export const useSession = create<SessionState>((set, get) => ({
       pages: {},
       viewMode: 'composed',
       splitRatio: 0.5,
+      brush: { ...DEFAULT_BRUSH },
     }),
 
   dismissGuide: () => {

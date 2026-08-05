@@ -29,6 +29,9 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const toggleLayer = useSession((s) => s.toggleLayer)
   const toggleBubbleDone = useSession((s) => s.toggleBubbleDone)
   const setFrame = useSession((s) => s.setFrame)
+  const setBrushMode = useSession((s) => s.setBrushMode)
+  const setBrushRadius = useSession((s) => s.setBrushRadius)
+  const brush = useSession((s) => s.brush)
   const undo = useSession((s) => s.undo)
   const redo = useSession((s) => s.redo)
   const pageSession = useSession((s) =>
@@ -94,6 +97,25 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
         return
       }
 
+      // Brush tool
+      if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault()
+        setBrushMode(brush.mode === 'fill' ? 'off' : 'fill')
+        return
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault()
+        setBrushMode(brush.mode === 'restore' ? 'off' : 'restore')
+        return
+      }
+      if (e.key === '[' || e.key === ']') {
+        e.preventDefault()
+        const step = e.shiftKey ? 4 : 1
+        const delta = e.key === ']' ? step : -step
+        setBrushRadius(brush.radiusPx + delta)
+        return
+      }
+
       if (!doc || pageId == null) return
 
       const bubbles = orderedBubbles(doc)
@@ -102,7 +124,9 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
 
       // Frame nudge — arrow keys when a bubble is selected. Only moves the
       // box; text does not reflow until "Oto dizgi" (plan §Faz 1 #4).
+      // Disabled while brushing so arrows don't fight the tool.
       if (
+        brush.mode === 'off' &&
         selected != null &&
         (e.key === 'ArrowLeft' ||
           e.key === 'ArrowRight' ||
@@ -163,8 +187,12 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
         return
       }
 
-      // Escape clears bubble selection
+      // Escape clears brush tool first, then bubble selection
       if (e.key === 'Escape') {
+        if (brush.mode !== 'off') {
+          setBrushMode('off')
+          return
+        }
         selectBubble(null)
       }
     }
@@ -178,12 +206,16 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     selectedPageId,
     pageSession?.selectedBubbleId,
     pageSession?.edit,
+    brush.mode,
+    brush.radiusPx,
     selectPage,
     selectBubble,
     setViewMode,
     toggleLayer,
     toggleBubbleDone,
     setFrame,
+    setBrushMode,
+    setBrushRadius,
     undo,
     redo,
   ])

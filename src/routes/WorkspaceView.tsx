@@ -46,6 +46,11 @@ export function WorkspaceView() {
   const setAlign = useSession((s) => s.setAlign)
   const setFrame = useSession((s) => s.setFrame)
   const setBubbleDone = useSession((s) => s.setBubbleDone)
+  const setInset = useSession((s) => s.setInset)
+  const setBrushMode = useSession((s) => s.setBrushMode)
+  const setBrushRadius = useSession((s) => s.setBrushRadius)
+  const clearPaintForBubble = useSession((s) => s.clearPaintForBubble)
+  const brush = useSession((s) => s.brush)
   const hydrateEdit = useSession((s) => s.hydrateEdit)
   const resetPageLocal = useSession((s) => s.resetPageLocal)
   const pageSession = useSession((s) =>
@@ -287,6 +292,7 @@ export function WorkspaceView() {
             bubbleFontOverrides={bubbleFontOverrides}
             bubbleEdits={edit?.bubbles ?? {}}
             fonts={fontsQ.data ?? []}
+            brush={brush}
             typesetPending={typesetPending}
             hideDone={hideDone}
             onHideDoneChange={setHideDone}
@@ -329,6 +335,16 @@ export function WorkspaceView() {
             onToggleDone={(bubbleId, done) => {
               if (selectedPageId == null) return
               setBubbleDone(selectedPageId, bubbleId, done)
+            }}
+            onInset={(bubbleId, inset) => {
+              if (selectedPageId == null) return
+              setInset(selectedPageId, bubbleId, inset)
+            }}
+            onBrushMode={setBrushMode}
+            onBrushRadius={setBrushRadius}
+            onClearPaint={(bubbleId) => {
+              if (selectedPageId == null) return
+              clearPaintForBubble(selectedPageId, bubbleId)
             }}
           />
         ) : (

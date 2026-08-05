@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
+  BrushState,
   Bubble,
   BubbleEdit,
   BubbleLayout,
@@ -15,6 +16,15 @@ import { FontSelect } from '@/components/FontSelect'
 import { LayerRow } from '@/components/LayerRow'
 import { reasonLabel } from '@/components/flags'
 import { resolveFontPx } from '@/lib/bubbleFrame'
+import {
+  BRUSH_PRESETS,
+  BRUSH_RADIUS_MAX,
+  BRUSH_RADIUS_MIN,
+  DEFAULT_INSET,
+  INSET_MAX,
+  INSET_MIN,
+  resolveCleanInset,
+} from '@/lib/paintStroke'
 import { cn } from '@/lib/utils'
 
 const FONT_PX_STEP = 1
@@ -24,6 +34,7 @@ const LEADING_STEP = 0.05
 const LEADING_MIN = 0.8
 const LEADING_MAX = 2.0
 const DEFAULT_LEADING = 1.15
+const INSET_STEP = 1
 
 interface BubbleListProps {
   doc: PageDoc
@@ -34,6 +45,7 @@ interface BubbleListProps {
   bubbleFontOverrides: Record<number, string>
   bubbleEdits: Record<string, BubbleEdit>
   fonts: FontInfo[]
+  brush: BrushState
   typesetPending?: boolean
   hideDone?: boolean
   onHideDoneChange?: (hide: boolean) => void
@@ -48,6 +60,10 @@ interface BubbleListProps {
   onResetFrame: (bubbleId: number) => void
   onAutoTypeset: (bubbleId: number) => void
   onToggleDone: (bubbleId: number, done: boolean) => void
+  onInset: (bubbleId: number, inset: number | null) => void
+  onBrushMode: (mode: BrushState['mode']) => void
+  onBrushRadius: (radiusPx: number) => void
+  onClearPaint: (bubbleId: number) => void
 }
 
 function seedText(bubbleId: number, texts: BubbleText[]): string {
@@ -143,6 +159,7 @@ export function BubbleList({
   bubbleFontOverrides,
   bubbleEdits,
   fonts,
+  brush,
   typesetPending,
   hideDone,
   onHideDoneChange,
@@ -157,6 +174,10 @@ export function BubbleList({
   onResetFrame,
   onAutoTypeset,
   onToggleDone,
+  onInset,
+  onBrushMode,
+  onBrushRadius,
+  onClearPaint,
 }: BubbleListProps) {
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -488,6 +509,67 @@ export function BubbleList({
                       disabled={!clnLayer}
                       onCheckedChange={(v) => onToggleLayer(clnId, v)}
                     />
+                    {clnLayer && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-10 shrink-0 text-[10px] uppercase tracking-wide text-[var(--color-ink-muted)]">
+                          Inset
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 w-7 px-0"
+                          aria-label="Inset azalt"
+                          disabled={!clnOn}
+                          onClick={() => {
+                            const seed = clnLayer.mask?.inset ?? DEFAULT_INSET
+                            const cur = resolveCleanInset(seed, be?.inset)
+                            const next = Math.max(INSET_MIN, cur - INSET_STEP)
+                            onInset(
+                              bubble.id,
+                              next === seed ? null : next,
+                            )
+                          }}
+                        >
+                          −
+                        </Button>
+                        <span className="min-w-[2.5rem] text-center text-[11px] tabular-nums text-[var(--color-ink-muted)]">
+                          {resolveCleanInset(
+                            clnLayer.mask?.inset ?? DEFAULT_INSET,
+                            be?.inset,
+                          )}
+                          px
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 w-7 px-0"
+                          aria-label="Inset artır"
+                          disabled={!clnOn}
+                          onClick={() => {
+                            const seed = clnLayer.mask?.inset ?? DEFAULT_INSET
+                            const cur = resolveCleanInset(seed, be?.inset)
+                            const next = Math.min(INSET_MAX, cur + INSET_STEP)
+                            onInset(
+                              bubble.id,
+                              next === seed ? null : next,
+                            )
+                          }}
+                        >
+                          +
+                        </Button>
+                        {be?.inset != null && (
+                          <button
+                            type="button"
+                            className="ml-1 text-[11px] text-[var(--color-ink-muted)] hover:text-[var(--color-accent)]"
+                            onClick={() => onInset(bubble.id, null)}
+                          >
+                            Sıfırla
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <LayerRow
                       label="Metin"
                       checked={txtOn}
@@ -499,6 +581,98 @@ export function BubbleList({
                       }
                       onCheckedChange={(v) => onToggleLayer(txtId, v)}
                     />
+
+                    {/* Brush tool — only when this bubble is selected */}
+                    {selected && (
+                      <div className="flex flex-col gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 p-2">
+                        <span className="text-[10px] uppercase tracking-wide text-[var(--color-ink-muted)]">
+                          Fırça
+                        </span>
+                        <div className="flex gap-1">
+                          <Button
+                            type="button"
+                            variant={brush.mode === 'off' ? 'default' : 'outline'}
+                            size="sm"
+                            className="h-7 flex-1 text-[11px]"
+                            onClick={() => onBrushMode('off')}
+                          >
+                            Kapalı
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={brush.mode === 'fill' ? 'default' : 'outline'}
+                            size="sm"
+                            className="h-7 flex-1 text-[11px]"
+                            onClick={() => onBrushMode('fill')}
+                            title="Tıklanan pikselden renk alıp boya"
+                          >
+                            Boya
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={
+                              brush.mode === 'restore' ? 'default' : 'outline'
+                            }
+                            size="sm"
+                            className="h-7 flex-1 text-[11px]"
+                            onClick={() => onBrushMode('restore')}
+                            title="Orijinal pikseli geri getir"
+                          >
+                            Geri al
+                          </Button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1">
+                          {BRUSH_PRESETS.map((px) => (
+                            <Button
+                              key={px}
+                              type="button"
+                              variant={
+                                brush.radiusPx === px ? 'default' : 'outline'
+                              }
+                              size="sm"
+                              className="h-7 min-w-[2rem] px-1.5 text-[11px] tabular-nums"
+                              onClick={() => onBrushRadius(px)}
+                            >
+                              {px}
+                            </Button>
+                          ))}
+                          <input
+                            type="number"
+                            min={BRUSH_RADIUS_MIN}
+                            max={BRUSH_RADIUS_MAX}
+                            value={brush.radiusPx}
+                            onChange={(e) => {
+                              const v = Number(e.target.value)
+                              if (!Number.isFinite(v)) return
+                              onBrushRadius(
+                                Math.min(
+                                  BRUSH_RADIUS_MAX,
+                                  Math.max(BRUSH_RADIUS_MIN, Math.round(v)),
+                                ),
+                              )
+                            }}
+                            className="h-7 w-12 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-1 text-center text-[11px] tabular-nums text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                            aria-label="Fırça boyutu px"
+                          />
+                          {brush.mode === 'fill' && brush.color && (
+                            <span
+                              className="ml-auto h-5 w-5 rounded border border-[var(--color-border)]"
+                              style={{
+                                background: `rgb(${brush.color[0]}, ${brush.color[1]}, ${brush.color[2]})`,
+                              }}
+                              title="Son örneklenen renk"
+                            />
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="self-start text-[11px] text-[var(--color-ink-muted)] underline-offset-2 hover:text-[var(--color-accent)] hover:underline"
+                          onClick={() => onClearPaint(bubble.id)}
+                        >
+                          Bu balonun boyasını sil
+                        </button>
+                      </div>
+                    )}
 
                     <label className="flex cursor-pointer items-center gap-2 text-[11px] text-[var(--color-ink)]">
                       <input

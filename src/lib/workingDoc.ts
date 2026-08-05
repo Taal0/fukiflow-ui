@@ -1,4 +1,11 @@
-import type { BBox, Layer, PageDoc, PageDetail, PageEdit } from '@/api/types'
+import type {
+  BBox,
+  Layer,
+  PageDoc,
+  PageDetail,
+  PageEdit,
+  PaintStroke,
+} from '@/api/types'
 import type { PageSession } from '@/store/session'
 import {
   bubbleFontsFromEdit,
@@ -9,16 +16,29 @@ import {
 } from '@/store/session'
 import type { TypesetBody } from '@/api/client'
 import { resolveBubbleFrame } from '@/lib/bubbleFrame'
+import { paintLayerId } from '@/api/types'
 
-/** Merge session typeset layers into the seed PageDoc for compose/download. */
+const PAINT_Z_BASE = 150
+
+/** Merge session typeset + paint/inset overlays into the seed PageDoc. */
 export function buildWorkingDoc(
   seed: PageDoc,
   session: PageSession | undefined,
 ): PageDoc {
-  if (!session?.textLayers?.length) {
-    // Still apply layout overlays onto existing text layers when present.
-    if (!session || !Object.keys(session.layoutsByBubble).length) return seed
-    return {
+  let doc = seed
+  if (session?.textLayers?.length) {
+    const byId = new Map(session.textLayers.map((l) => [l.id, l]))
+    const layers: Layer[] = seed.layers.map((layer) => {
+      if (layer.kind !== 'text') return layer
+      const updated = byId.get(layer.id)
+      if (!updated) return layer
+      byId.delete(layer.id)
+      return updated
+    })
+    for (const leftover of byId.values()) layers.push(leftover)
+    doc = { ...seed, layers }
+  } else if (session && Object.keys(session.layoutsByBubble).length) {
+    doc = {
       ...seed,
       layers: seed.layers.map((layer) => {
         if (layer.kind !== 'text' || layer.bubble_id == null) return layer
@@ -28,18 +48,81 @@ export function buildWorkingDoc(
     }
   }
 
-  const byId = new Map(session.textLayers.map((l) => [l.id, l]))
-  const layers: Layer[] = seed.layers.map((layer) => {
-    if (layer.kind !== 'text') return layer
-    const updated = byId.get(layer.id)
-    if (!updated) return layer
-    byId.delete(layer.id)
-    return updated
+  return applyEditLayers(doc, session?.edit)
+}
+
+/** Apply inset overrides + materialize paint layers (parity with server merge). */
+export function applyEditLayers(
+  seed: PageDoc,
+  edit: PageEdit | undefined,
+): PageDoc {
+  if (!edit) return seed
+
+  const insetByBubble = new Map<number, number>()
+  for (const [k, be] of Object.entries(edit.bubbles ?? {})) {
+    if (be.inset != null) insetByBubble.set(Number(k), be.inset)
+  }
+  const paint = edit.paint ?? []
+  if (!insetByBubble.size && !paint.length) return seed
+
+  let layers = seed.layers.map((layer) => {
+    if (layer.kind !== 'clean' || layer.bubble_id == null) return layer
+    const inset = insetByBubble.get(layer.bubble_id)
+    if (inset == null || !layer.mask) return layer
+    return { ...layer, mask: { ...layer.mask, inset } }
   })
-  // Append any new text layers not in seed (shouldn't happen, but safe).
-  for (const leftover of byId.values()) layers.push(leftover)
+
+  if (paint.length) {
+    layers = layers.filter((l) => l.kind !== 'paint')
+    layers = [...layers, ...paintLayersFromStrokes(paint, seed)]
+  }
 
   return { ...seed, layers }
+}
+
+function bubbleBBox(doc: PageDoc, bubbleId: number | undefined): BBox {
+  if (bubbleId == null) {
+    return [0, 0, doc.source.width, doc.source.height]
+  }
+  const b = doc.bubbles.find((x) => x.id === bubbleId)
+  return b?.bbox ?? [0, 0, doc.source.width, doc.source.height]
+}
+
+function paintLayersFromStrokes(
+  paint: PaintStroke[],
+  doc: PageDoc,
+): Layer[] {
+  const byBubble = new Map<number | 'page', PaintStroke[]>()
+  for (const stroke of paint) {
+    const key =
+      stroke.bubble_id != null && Number.isFinite(stroke.bubble_id)
+        ? stroke.bubble_id
+        : 'page'
+    const list = byBubble.get(key) ?? []
+    list.push(stroke)
+    byBubble.set(key, list)
+  }
+
+  const out: Layer[] = []
+  for (const [key, strokes] of byBubble) {
+    const bid = key === 'page' ? undefined : key
+    const id = bid != null ? paintLayerId(bid) : 'pnt_page'
+    out.push({
+      id,
+      kind: 'paint',
+      name: bid != null ? `Paint / bubble ${bid}` : 'Paint / page',
+      group: bid != null ? `bubble_${bid}` : null,
+      bubble_id: bid ?? null,
+      enabled: true,
+      opacity: 1,
+      blend: 'normal',
+      z: PAINT_Z_BASE + (bid ?? 0),
+      source_step: 'paint.v1',
+      bbox: bubbleBBox(doc, bid),
+      strokes,
+    })
+  }
+  return out
 }
 
 export function buildTypesetBody(

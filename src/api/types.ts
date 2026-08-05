@@ -77,7 +77,7 @@ export interface MaskSpec {
 
 export interface Layer {
   id: string
-  kind: 'clean' | 'text' | string
+  kind: 'clean' | 'text' | 'paint' | string
   name: string
   group?: string | null
   bubble_id?: number | null
@@ -92,6 +92,7 @@ export interface Layer {
   raster_file?: string | null
   layout?: BubbleLayout | null
   frame?: BBox | null
+  strokes?: PaintStroke[]
 }
 
 export interface DocFlags {
@@ -144,6 +145,8 @@ export interface BubbleEdit {
   frame?: BBox
   layers_off?: string[]
   done?: boolean
+  /** Clean fill MaskSpec.inset override (px). */
+  inset?: number
 }
 
 export interface PaintStroke {
@@ -161,6 +164,15 @@ export interface PageEdit {
   page?: { font?: string }
   bubbles: Record<string, BubbleEdit>
   paint?: PaintStroke[]
+}
+
+export type BrushMode = 'off' | 'fill' | 'restore'
+
+export interface BrushState {
+  mode: BrushMode
+  radiusPx: number
+  /** Last sampled RGB for fill strokes. */
+  color: [number, number, number] | null
 }
 
 export interface PageProgress {
@@ -215,13 +227,17 @@ export interface FontInfo {
 
 export type ViewMode = 'composed' | 'original' | 'split'
 
-/** Stable layer id helpers — match vision/layers/build.py */
+/** Stable layer id helpers — match vision/layers/build.py + edits paint merge */
 export function cleanLayerId(bubbleId: number): string {
   return `cln_${bubbleId}`
 }
 
 export function textLayerId(bubbleId: number): string {
   return `txt_${bubbleId}`
+}
+
+export function paintLayerId(bubbleId: number): string {
+  return `pnt_${bubbleId}`
 }
 
 export function bubbleGroupId(bubbleId: number): string {
