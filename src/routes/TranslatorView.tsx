@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, PanelLeft } from 'lucide-react'
+import { ApiError } from '@/api/client'
 import {
   useChapterPages,
   useChapters,
+  useDeletePageMutation,
   useFonts,
   usePage,
 } from '@/api/queries'
@@ -79,6 +81,7 @@ export function TranslatorView() {
     selectedPageId != null ? s.pages[selectedPageId] : undefined,
   )
   const pagesMap = useSession((s) => s.pages)
+  const deletePage = useDeletePageMutation()
 
   const isTablet = useMediaQuery('(max-width: 1023px)')
   const isDesktop = useMediaQuery('(min-width: 1024px)')
@@ -111,13 +114,26 @@ export function TranslatorView() {
   })
 
   useEffect(() => {
-    if (!chapters.data?.length) return
+    if (!chapters.data?.length) {
+      if (!routeSlug && !chapters.isLoading) {
+        navigate('/', { replace: true })
+      }
+      return
+    }
     if (routeSlug) {
       if (chapterSlug !== routeSlug) setChapterSlug(routeSlug)
       return
     }
-    if (!chapterSlug) setChapterSlug(chapters.data[0]!.slug)
-  }, [chapters.data, chapterSlug, routeSlug, setChapterSlug])
+    // Bare /translate → catalog (no auto-pick).
+    navigate('/', { replace: true })
+  }, [
+    chapters.data,
+    chapters.isLoading,
+    chapterSlug,
+    routeSlug,
+    setChapterSlug,
+    navigate,
+  ])
 
   const pagesQuery = useChapterPages(chapterSlug ?? undefined)
   const pages = pagesQuery.data ?? []
@@ -273,6 +289,32 @@ export function TranslatorView() {
     ? currentPage.stem || `Sayfa ${currentPage.page_no}`
     : null
 
+  const chapterSource =
+    chapters.data?.find((c) => c.slug === chapterSlug)?.source_type ?? 'seed'
+  const canDeletePages = chapterSource === 'upload'
+
+  const handleDeletePage = (pageId: number) => {
+    const idx = pages.findIndex((p) => p.id === pageId)
+    const next = pages[idx + 1]?.id ?? pages[idx - 1]?.id ?? null
+    deletePage.mutate(pageId, {
+      onSuccess: (data) => {
+        if (data.chapter_deleted) {
+          navigate('/', { replace: true })
+          toast('Chapter silindi', 'success')
+          return
+        }
+        if (selectedPageId === pageId) {
+          if (next != null) goToPage(next)
+          else navigate('/', { replace: true })
+        }
+        toast('Sayfa silindi', 'success')
+      },
+      onError: (e) => {
+        toast(e instanceof ApiError ? e.message : 'Sayfa silinemedi', 'danger')
+      },
+    })
+  }
+
   const galleryNode = (
     <>
       {isDesktop && (
@@ -289,6 +331,8 @@ export function TranslatorView() {
             }
             width={galleryResize.width}
             progressMode="translated"
+            canDeletePages={canDeletePages}
+            onDeletePage={handleDeletePage}
           />
           <div
             {...galleryResize.handleProps}
@@ -312,6 +356,8 @@ export function TranslatorView() {
           drawerOpen={galleryDrawerOpen}
           onCloseDrawer={() => patchUi({ galleryDrawerOpen: false })}
           progressMode="translated"
+          canDeletePages={canDeletePages}
+          onDeletePage={handleDeletePage}
         />
       )}
     </>
@@ -337,12 +383,18 @@ export function TranslatorView() {
                 <PanelLeft className="h-4 w-4" />
               </Button>
             )}
-            <BrandMark size="sm" />
+            <Link
+              to="/"
+              className="outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+              title="Projeler"
+            >
+              <BrandMark size="sm" />
+            </Link>
             <span className="hidden rounded bg-[var(--color-accent-soft)] px-2 py-0.5 text-[length:var(--text-meta)] font-medium text-[var(--color-accent)] sm:inline">
               Çevirmen
             </span>
             <Link
-              to="/"
+              to={chapterSlug ? `/edit/${chapterSlug}` : '/'}
               className="shrink-0 text-[length:var(--text-ui)] text-[var(--color-ink-muted)] underline-offset-2 hover:text-[var(--color-ink)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
             >
               Letterer

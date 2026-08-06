@@ -83,6 +83,7 @@ interface SessionState {
   setActiveTool: (tool: ActiveTool) => void
   patchUi: (patch: Partial<UiPrefs>) => void
   setTheme: (theme: ThemePreference) => void
+  setWorkspaceRole: (role: WorkspaceRole) => void
   setZoomPercent: (pct: number) => void
   requestZoom: (kind: 'fit' | '100' | 'set', scale?: number) => void
   openGuide: () => void
@@ -262,6 +263,7 @@ const GUIDE_KEY = 'fukiflow.guideDismissed'
 const UI_KEY = 'fukiflow.ui'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
+export type WorkspaceRole = 'letterer' | 'translator'
 export type ActiveTool = 'select' | 'frame' | 'paint' | 'restore' | 'region'
 export type BubbleFilter = 'all' | 'undone' | 'overflow' | 'editor'
 export type ThumbSize = 'sm' | 'lg'
@@ -272,6 +274,7 @@ export type ZoomCommand =
 
 export interface UiPrefs {
   theme: ThemePreference
+  workspaceRole: WorkspaceRole
   galleryWidth: number
   panelWidth: number
   panelListRatio: number
@@ -286,6 +289,7 @@ export interface UiPrefs {
 
 export const UI_DEFAULTS: UiPrefs = {
   theme: 'system',
+  workspaceRole: 'letterer',
   galleryWidth: 208,
   panelWidth: 352,
   panelListRatio: 0.55,
@@ -317,6 +321,8 @@ function readUiPrefs(): UiPrefs {
     return {
       ...UI_DEFAULTS,
       theme: parsed.theme ?? UI_DEFAULTS.theme,
+      workspaceRole:
+        parsed.workspaceRole === 'translator' ? 'translator' : 'letterer',
       galleryWidth: clampNum(
         parsed.galleryWidth,
         GALLERY_WIDTH.min,
@@ -350,6 +356,7 @@ function persistUi(ui: UiPrefs) {
       UI_KEY,
       JSON.stringify({
         theme: ui.theme,
+        workspaceRole: ui.workspaceRole,
         galleryWidth: ui.galleryWidth,
         panelWidth: ui.panelWidth,
         panelListRatio: ui.panelListRatio,
@@ -532,6 +539,13 @@ export const useSession = create<SessionState>((set, get) => ({
       const ui = { ...s.ui, theme }
       persistUi(ui)
       applyThemeAttribute(theme)
+      return { ui }
+    }),
+
+  setWorkspaceRole: (role) =>
+    set((s) => {
+      const ui = { ...s.ui, workspaceRole: role }
+      persistUi(ui)
       return { ui }
     }),
 

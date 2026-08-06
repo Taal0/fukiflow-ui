@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import {
   useChapterPages,
   useChapters,
   useDeletePageEditMutation,
+  useDeletePageMutation,
   useFonts,
   usePage,
 } from '@/api/queries'
@@ -62,6 +64,8 @@ function useMediaQuery(query: string) {
 }
 
 export function WorkspaceView() {
+  const { slug: routeSlug } = useParams()
+  const navigate = useNavigate()
   const chapters = useChapters()
   const chapterSlug = useSession((s) => s.chapterSlug)
   const setChapterSlug = useSession((s) => s.setChapterSlug)
@@ -93,6 +97,7 @@ export function WorkspaceView() {
     selectedPageId != null ? s.pages[selectedPageId] : undefined,
   )
   const deleteEdit = useDeletePageEditMutation()
+  const deletePage = useDeletePageMutation()
   const [guideOpen, setGuideOpen] = useState(false)
 
   const isTablet = useMediaQuery('(max-width: 1023px)')
@@ -101,6 +106,18 @@ export function WorkspaceView() {
   useEffect(() => {
     applyThemeAttribute(theme)
   }, [theme])
+
+  // URL is source of truth for chapter.
+  useEffect(() => {
+    if (!routeSlug) {
+      navigate('/', { replace: true })
+      return
+    }
+    if (chapterSlug !== routeSlug) {
+      setChapterSlug(routeSlug)
+      selectPage(null)
+    }
+  }, [routeSlug, chapterSlug, setChapterSlug, navigate, selectPage])
 
   const galleryResize = useResizablePanel({
     value: galleryWidth,
@@ -120,11 +137,6 @@ export function WorkspaceView() {
     edge: 'left',
   })
 
-  useEffect(() => {
-    if (chapterSlug || !chapters.data?.length) return
-    setChapterSlug(chapters.data[0]!.slug)
-  }, [chapters.data, chapterSlug, setChapterSlug])
-
   const pagesQ = useChapterPages(chapterSlug ?? undefined)
   const fontsQ = useFonts()
   const pageQ = usePage(selectedPageId)
@@ -133,6 +145,14 @@ export function WorkspaceView() {
     if (selectedPageId != null || !pagesQ.data?.length) return
     selectPage(pagesQ.data[0]!.id)
   }, [pagesQ.data, selectedPageId, selectPage])
+
+  // Unknown slug → back to catalog.
+  useEffect(() => {
+    if (!routeSlug || chapters.isLoading || !chapters.data) return
+    if (!chapters.data.some((c) => c.slug === routeSlug)) {
+      navigate('/', { replace: true })
+    }
+  }, [routeSlug, chapters.data, chapters.isLoading, navigate])
 
   useEffect(() => {
     if (!pageQ.data || selectedPageId == null) return
@@ -172,6 +192,31 @@ export function WorkspaceView() {
 
   const chapterTitle =
     chapters.data?.find((c) => c.slug === chapterSlug)?.title ?? chapterSlug
+  const chapterSource =
+    chapters.data?.find((c) => c.slug === chapterSlug)?.source_type ?? 'seed'
+  const canDeletePages = chapterSource === 'upload'
+
+  const handleDeletePage = (pageId: number) => {
+    const list = pagesQ.data ?? []
+    const idx = list.findIndex((p) => p.id === pageId)
+    const next =
+      list[idx + 1]?.id ?? list[idx - 1]?.id ?? null
+    deletePage.mutate(pageId, {
+      onSuccess: (data) => {
+        if (data.chapter_deleted) {
+          navigate('/', { replace: true })
+          toast('Chapter silindi', 'success')
+          return
+        }
+        if (selectedPageId === pageId) selectPage(next)
+        toast('Sayfa silindi', 'success')
+      },
+      onError: (e) => {
+        toast(e instanceof ApiError ? e.message : 'Sayfa silinemedi', 'danger')
+      },
+    })
+  }
+
   const pageLabel =
     pageQ.data && chapterTitle
       ? `${chapterTitle} · s. ${pageQ.data.page.page_no}`
@@ -310,6 +355,8 @@ export function WorkspaceView() {
             loading={pagesQ.isLoading || chapters.isLoading}
             error={catalogError}
             width={galleryResize.width}
+            canDeletePages={canDeletePages}
+            onDeletePage={handleDeletePage}
           />
           <div
             {...galleryResize.handleProps}
@@ -328,6 +375,8 @@ export function WorkspaceView() {
           asDrawer
           drawerOpen={galleryDrawerOpen}
           onCloseDrawer={() => patchUi({ galleryDrawerOpen: false })}
+          canDeletePages={canDeletePages}
+          onDeletePage={handleDeletePage}
         />
       )}
     </>

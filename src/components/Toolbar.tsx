@@ -183,9 +183,15 @@ export function Toolbar({
               <PanelLeft className="h-4 w-4" />
             </Button>
           )}
-          <BrandMark />
           <Link
-            to="/translate"
+            to="/"
+            className="outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+            title="Projeler"
+          >
+            <BrandMark />
+          </Link>
+          <Link
+            to={chapterSlug ? `/translate/${chapterSlug}` : '/'}
             className="shrink-0 text-[length:var(--text-meta)] text-[var(--color-ink-muted)] underline-offset-2 hover:text-[var(--color-ink)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
           >
             Çevirmen

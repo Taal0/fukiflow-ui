@@ -9,7 +9,7 @@ export function useChapters() {
   return useQuery({
     queryKey: ['chapters'],
     queryFn: api.chapters,
-    staleTime: SEED_STALE,
+    staleTime: 30_000,
   })
 }
 
@@ -18,7 +18,7 @@ export function useChapterPages(slug: string | undefined) {
     queryKey: ['chapters', slug, 'pages'],
     queryFn: () => api.chapterPages(slug!),
     enabled: Boolean(slug),
-    staleTime: SEED_STALE,
+    staleTime: 30_000,
   })
 }
 
@@ -106,6 +106,32 @@ export function useDeletePageEditMutation() {
           (q.queryKey[2] === 'progress' || q.queryKey[2] === 'pages'),
       })
       void qc.invalidateQueries({ queryKey: ['pages', pageId] })
+    },
+  })
+}
+
+export function useDeleteChapterMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (slug: string) => api.deleteChapter(slug),
+    onSuccess: (_data, slug) => {
+      void qc.invalidateQueries({ queryKey: ['chapters'] })
+      void qc.removeQueries({ queryKey: ['chapters', slug] })
+    },
+  })
+}
+
+export function useDeletePageMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (pageId: number) => api.deletePage(pageId),
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ['chapters'] })
+      void qc.invalidateQueries({ queryKey: ['chapters', data.slug] })
+      void qc.removeQueries({ queryKey: ['pages', data.page_id] })
+      if (data.chapter_deleted) {
+        void qc.removeQueries({ queryKey: ['chapters', data.slug] })
+      }
     },
   })
 }

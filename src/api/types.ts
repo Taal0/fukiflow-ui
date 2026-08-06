@@ -117,6 +117,13 @@ export interface Chapter {
   slug: string
   title: string
   page_count: number
+  source_type?: 'seed' | 'upload' | string
+  created_at?: string | null
+  cover_url?: string | null
+  done_count?: number
+  bubble_count?: number
+  processing_count?: number
+  error_count?: number
 }
 
 export interface PageSummary {
@@ -133,6 +140,8 @@ export interface PageSummary {
   done_count?: number
   /** Overlay texts (bubbles + regions) with non-empty strip. */
   translated_count?: number
+  processing_status?: string
+  error_message?: string | null
 }
 
 /** Per-bubble overlay fields persisted in PageEdit. */

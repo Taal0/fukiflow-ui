@@ -33,7 +33,7 @@ export class ApiError extends Error {
   }
 }
 
-function errorDetail(body: unknown, fallback: string): string {
+export function errorDetail(body: unknown, fallback: string): string {
   if (!body || typeof body !== 'object') return fallback
   const b = body as {
     detail?: string | { message?: string }
@@ -218,6 +218,45 @@ export const api = {
     request<ChapterProgress>(
       `/api/chapters/${encodeURIComponent(slug)}/progress`,
     ),
+
+  /** POST multipart upload; response body is an SSE stream. */
+  uploadChapter: (
+    files: File[],
+    opts?: { title?: string; signal?: AbortSignal },
+  ) => {
+    const form = new FormData()
+    if (opts?.title?.trim()) form.append('title', opts.title.trim())
+    const isZip =
+      files.length === 1 &&
+      (files[0]!.name.toLowerCase().endsWith('.zip') ||
+        files[0]!.type === 'application/zip' ||
+        files[0]!.type === 'application/x-zip-compressed')
+    if (isZip) {
+      form.append('zip_file', files[0]!)
+    } else {
+      for (const f of files) form.append('files', f)
+    }
+    return fetch(apiUrl('/api/chapters/upload'), {
+      method: 'POST',
+      body: form,
+      headers: { Accept: 'text/event-stream' },
+      signal: opts?.signal,
+    })
+  },
+
+  deleteChapter: (slug: string) =>
+    request<{ ok: boolean; slug: string }>(
+      `/api/chapters/${encodeURIComponent(slug)}`,
+      { method: 'DELETE' },
+    ),
+
+  deletePage: (pageId: number) =>
+    request<{
+      ok: boolean
+      page_id: number
+      chapter_deleted: boolean
+      slug: string
+    }>(`/api/pages/${pageId}`, { method: 'DELETE' }),
 }
 
 export function triggerDownload(blob: Blob, filename: string): void {

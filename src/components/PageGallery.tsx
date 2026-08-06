@@ -1,7 +1,15 @@
-import { useEffect, useRef } from 'react'
-import { LayoutGrid, List } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { LayoutGrid, List, MoreHorizontal, Trash2 } from 'lucide-react'
 import type { PageSummary } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
 import { statusLabel } from '@/components/flags'
 import { useSession } from '@/store/session'
@@ -20,6 +28,9 @@ interface PageGalleryProps {
   onCloseDrawer?: () => void
   /** Letterer shows done/bubble; translator shows translated/total. */
   progressMode?: 'done' | 'translated'
+  /** Allow deleting uploaded pages (seed chapters stay protected). */
+  canDeletePages?: boolean
+  onDeletePage?: (pageId: number) => void
 }
 
 export function PageGallery({
@@ -33,10 +44,13 @@ export function PageGallery({
   drawerOpen,
   onCloseDrawer,
   progressMode = 'done',
+  canDeletePages,
+  onDeletePage,
 }: PageGalleryProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const thumbSize = useSession((s) => s.ui.thumbSize)
   const patchUi = useSession((s) => s.patchUi)
+  const [pendingDelete, setPendingDelete] = useState<PageSummary | null>(null)
 
   useEffect(() => {
     const el = listRef.current
@@ -168,7 +182,7 @@ export function PageGallery({
 
             if (thumbSize === 'sm') {
               return (
-                <li key={page.id}>
+                <li key={page.id} className="group relative">
                   <button
                     type="button"
                     data-selected={selected || undefined}
@@ -212,12 +226,42 @@ export function PageGallery({
                       </span>
                     )}
                   </button>
+                  {canDeletePages && onDeletePage && (
+                    <div className="absolute right-0.5 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            aria-label="Sayfa menüsü"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MoreHorizontal className="h-3 w-3" aria-hidden />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            danger
+                            onSelect={() => setPendingDelete(page)}
+                          >
+                            <Trash2
+                              className="h-3.5 w-3.5 shrink-0 opacity-70"
+                              aria-hidden
+                            />
+                            Sayfayı Sil
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  )}
                 </li>
               )
             }
 
             return (
-              <li key={page.id}>
+              <li key={page.id} className="group relative">
                 <button
                   type="button"
                   data-selected={selected || undefined}
@@ -248,6 +292,36 @@ export function PageGallery({
                     <span className="absolute left-1 top-1 rounded bg-black/55 px-1.5 py-0.5 text-[length:var(--text-meta)] font-medium text-white">
                       {page.page_no}
                     </span>
+                    {canDeletePages && onDeletePage && (
+                      <div className="absolute right-1 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-6 w-6 bg-[var(--color-surface-raised)]/90"
+                              aria-label="Sayfa menüsü"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="h-3 w-3" aria-hidden />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              danger
+                              onSelect={() => setPendingDelete(page)}
+                            >
+                              <Trash2
+                                className="h-3.5 w-3.5 shrink-0 opacity-70"
+                                aria-hidden
+                              />
+                              Sayfayı Sil
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    )}
                   </div>
                   {page.bubble_count > 0 && (
                     <div
@@ -284,19 +358,50 @@ export function PageGallery({
     </aside>
   )
 
-  if (!asDrawer) return body
+  const dialog = (
+    <ConfirmDialog
+      open={pendingDelete != null}
+      onOpenChange={(open) => {
+        if (!open) setPendingDelete(null)
+      }}
+      title="Sayfayı sil"
+      description={
+        pendingDelete
+          ? `'${pendingDelete.stem || `Sayfa ${pendingDelete.page_no}`}' kalıcı olarak silinecek.`
+          : ''
+      }
+      confirmLabel="Sil"
+      tone="danger"
+      onConfirm={() => {
+        if (pendingDelete) onDeletePage?.(pendingDelete.id)
+        setPendingDelete(null)
+      }}
+    />
+  )
 
-  if (!drawerOpen) return null
+  if (!asDrawer) {
+    return (
+      <>
+        {body}
+        {dialog}
+      </>
+    )
+  }
+
+  if (!drawerOpen) return dialog
 
   return (
-    <div className="absolute inset-0 z-30 flex lg:static">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/40 lg:hidden"
-        aria-label="Galeriyi kapat"
-        onClick={onCloseDrawer}
-      />
-      <div className="relative z-10 h-full">{body}</div>
-    </div>
+    <>
+      <div className="absolute inset-0 z-30 flex lg:static">
+        <button
+          type="button"
+          className="absolute inset-0 bg-black/40 lg:hidden"
+          aria-label="Galeriyi kapat"
+          onClick={onCloseDrawer}
+        />
+        <div className="relative z-10 h-full">{body}</div>
+      </div>
+      {dialog}
+    </>
   )
 }
