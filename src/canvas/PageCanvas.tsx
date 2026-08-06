@@ -63,7 +63,14 @@ interface PageCanvasProps {
   mode?: CanvasMode
 }
 
-type DragMode = 'pan' | 'split' | 'frame' | 'brush' | 'region' | null
+type DragMode =
+  | 'pan'
+  | 'split'
+  | 'frame'
+  | 'brush'
+  | 'region'
+  | 'region-edit'
+  | null
 
 const EMPTY_SET = new Set<string>()
 const EMPTY_NUM_RECORD: Record<number, number> = {}
@@ -99,6 +106,7 @@ export function PageCanvas({
     handle?: FrameHandle
     originFrame?: BBox
     bubbleId?: number
+    regionId?: string
     moved?: boolean
   } | null>(null)
   /** Live frame while dragging (page px) — avoids undo spam mid-drag. */
@@ -110,6 +118,9 @@ export function PageCanvas({
   /** Live region rect while drawing (page px). */
   const liveRegionRef = useRef<BBox | null>(null)
   const [liveRegionTick, setLiveRegionTick] = useState(0)
+  /** Live bbox while moving/resizing an existing region. */
+  const liveRegionEditRef = useRef<BBox | null>(null)
+  const [liveRegionEditTick, setLiveRegionEditTick] = useState(0)
   const [cursorPage, setCursorPage] = useState<Point | null>(null)
 
   const [ready, setReady] = useState(false)
@@ -134,6 +145,8 @@ export function PageCanvas({
   const setFrame = useSession((s) => s.setFrame)
   const appendPaintStroke = useSession((s) => s.appendPaintStroke)
   const addRegion = useSession((s) => s.addRegion)
+  const updateRegionBbox = useSession((s) => s.updateRegionBbox)
+  const setActiveTool = useSession((s) => s.setActiveTool)
   const setBrushColor = useSession((s) => s.setBrushColor)
   const brush = useSession((s) => s.brush)
   const theme = useSession((s) => s.ui.theme)
@@ -177,6 +190,11 @@ export function PageCanvas({
       ? detail.doc.bubbles.find((b) => b.id === selectedBubbleId)
       : undefined
 
+  const selectedRegion =
+    selectedRegionId != null
+      ? regions.find((r) => r.id === selectedRegionId)
+      : undefined
+
   const storedFrame = useMemo(() => {
     if (!selectedBubble) return null
     return resolveBubbleFrame(
@@ -187,6 +205,9 @@ export function PageCanvas({
 
   const selectedFrame = liveFrameRef.current ?? storedFrame
   const storedFrameKey = frameKey(storedFrame)
+  const storedRegionBbox = selectedRegion?.bbox ?? null
+  const storedRegionKey = frameKey(storedRegionBbox)
+  const selectedRegionBbox = liveRegionEditRef.current ?? storedRegionBbox
 
   const neededFontKeys = fonts.map((f) => f.key)
   const { ready: fontsReady } = usePageFonts(fonts, neededFontKeys)
@@ -211,6 +232,11 @@ export function PageCanvas({
     if (dragRef.current?.mode === 'frame') return
     liveFrameRef.current = null
   }, [selectedBubbleId, storedFrameKey])
+
+  useEffect(() => {
+    if (dragRef.current?.mode === 'region-edit') return
+    liveRegionEditRef.current = null
+  }, [selectedRegionId, storedRegionKey])
 
   // Invalidate cached page composite when layer/text/frame content changes.
   // Pan, zoom, cursor, and live stroke reuse the base canvas.
@@ -444,7 +470,10 @@ export function PageCanvas({
     // Visible overlay pass: regions + order badges (never baked into compose).
     const overlayRegions: { id: string; bbox: BBox }[] = regions.map((r) => ({
       id: r.id,
-      bbox: r.bbox,
+      bbox:
+        r.id === selectedRegionId && liveRegionEditRef.current
+          ? liveRegionEditRef.current
+          : r.bbox,
     }))
     if (liveRegionRef.current) {
       overlayRegions.push({ id: '__live__', bbox: liveRegionRef.current })
@@ -473,7 +502,9 @@ export function PageCanvas({
             const r =
               item.id === '__live__'
                 ? null
-                : regions.find((x) => x.id === item.id)
+                : item.id === selectedRegionId && liveRegionEditRef.current
+                  ? { id: item.id, bbox: liveRegionEditRef.current }
+                  : regions.find((x) => x.id === item.id)
             if (r) badges.push({ kind: 'region', id: r.id, bbox: r.bbox, index: i + 1 })
           }
         })
@@ -520,6 +551,7 @@ export function PageCanvas({
     liveFrameTick,
     liveStrokeTick,
     liveRegionTick,
+    liveRegionEditTick,
     brushActive,
     brush.mode,
     brush.radiusPx,
@@ -579,6 +611,43 @@ export function PageCanvas({
     return () => window.clearTimeout(t)
   }, [activeTool])
 
+  // Leaving region tool (or Esc) cancels an in-progress draw.
+  const cancelRegionDraw = useEffectEvent(() => {
+    const drawing =
+      liveRegionRef.current != null || dragRef.current?.mode === 'region'
+    if (!drawing) return false
+    liveRegionRef.current = null
+    if (dragRef.current?.mode === 'region') dragRef.current = null
+    setLiveRegionTick((n) => n + 1)
+    schedulePaint()
+    return true
+  })
+
+  useEffect(() => {
+    if (activeTool !== 'region') cancelRegionDraw()
+  }, [activeTool])
+
+  useEffect(() => {
+    if (mode !== 'translator') return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (cancelRegionDraw()) {
+        e.preventDefault()
+        setActiveTool('select')
+        return
+      }
+      if (dragRef.current?.mode === 'region-edit') {
+        e.preventDefault()
+        liveRegionEditRef.current = null
+        dragRef.current = null
+        setLiveRegionEditTick((n) => n + 1)
+        schedulePaint()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mode, setActiveTool])
+
   useEffect(() => {
     return () => {
       if (rafRef.current != null) {
@@ -614,6 +683,18 @@ export function PageCanvas({
     // Match drawn handle half-size (constant screen px → page px)
     const half = HANDLE_SCREEN_PX / scale
     return hitTestFrame(liveFrameRef.current ?? storedFrame, pageX, pageY, half)
+  }
+
+  const regionHitAt = (pageX: number, pageY: number): FrameHandle | null => {
+    if (mode !== 'translator' || !selectedRegionBbox) return null
+    const scale = transformRef.current.scale || 1
+    const half = HANDLE_SCREEN_PX / scale
+    return hitTestFrame(
+      liveRegionEditRef.current ?? selectedRegionBbox,
+      pageX,
+      pageY,
+      half,
+    )
   }
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -685,9 +766,57 @@ export function PageCanvas({
       return
     }
 
+    // Translator: move/resize selected region (select tool).
+    if (
+      e.button === 0 &&
+      mode === 'translator' &&
+      !regionTool &&
+      selectedRegionId &&
+      selectedRegionBbox
+    ) {
+      const page = screenToPage(x, y, transformRef.current)
+      const handle = regionHitAt(page.x, page.y)
+      if (handle) {
+        dragRef.current = {
+          mode: 'region-edit',
+          startX: page.x,
+          startY: page.y,
+          originX: transformRef.current.offsetX,
+          originY: transformRef.current.offsetY,
+          originSplit: splitRatio,
+          handle,
+          originFrame: [
+            ...(liveRegionEditRef.current ?? selectedRegionBbox),
+          ] as BBox,
+          regionId: selectedRegionId,
+          moved: false,
+        }
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setCursor(cursorForFrameHandle(handle))
+        return
+      }
+    }
+
     // Translator region draw — drag a dashed rectangle.
     if (e.button === 0 && regionTool) {
       const page = screenToPage(x, y, transformRef.current)
+      // Click on an existing box → select + edit instead of starting a new draw.
+      const existing = hitTestRegion(regions, page.x, page.y)
+      if (existing) {
+        selectRegion(existing.id)
+        setActiveTool('select')
+        requestAnimationFrame(() => {
+          const el = document.querySelector(
+            'aside [data-selected="true"] textarea',
+          )
+          if (el instanceof HTMLTextAreaElement) {
+            el.focus()
+            const len = el.value.length
+            el.setSelectionRange(len, len)
+          }
+        })
+        return
+      }
       const px = Math.max(0, Math.min(sourceW, page.x))
       const py = Math.max(0, Math.min(sourceH, page.y))
       liveRegionRef.current = [px, py, px, py]
@@ -765,6 +894,13 @@ export function PageCanvas({
       } else if (brushActive) {
         setCursor(selectedBubble ? 'crosshair' : 'cell')
       } else if (
+        mode === 'translator' &&
+        selectedRegionId &&
+        selectedRegionBbox
+      ) {
+        const page = screenToPage(x, y, transformRef.current)
+        setCursor(cursorForFrameHandle(regionHitAt(page.x, page.y)))
+      } else if (
         mode === 'letterer' &&
         selectedBubble &&
         storedFrame &&
@@ -793,6 +929,24 @@ export function PageCanvas({
       if (Math.abs(x1 - x0) > 0.5 || Math.abs(y1 - y0) > 0.5) drag.moved = true
       liveRegionRef.current = [x0, y0, x1, y1]
       setLiveRegionTick((t) => t + 1)
+      schedulePaint()
+      return
+    }
+
+    if (drag.mode === 'region-edit' && drag.originFrame && drag.handle != null) {
+      const page = screenToPage(x, y, transformRef.current)
+      const dx = page.x - drag.startX
+      const dy = page.y - drag.startY
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) drag.moved = true
+      let next: BBox
+      if (drag.handle === 'move') {
+        next = nudgeFrame(drag.originFrame, dx, dy)
+      } else {
+        next = resizeFrame(drag.originFrame, drag.handle, dx, dy)
+      }
+      next = clampFrame(next, sourceW, sourceH)
+      liveRegionEditRef.current = next
+      setLiveRegionEditTick((t) => t + 1)
       schedulePaint()
       return
     }
@@ -871,10 +1025,37 @@ export function PageCanvas({
         const [x0, y0, x1, y1] = final
         if (x1 - x0 >= MIN_REGION_PX && y1 - y0 >= MIN_REGION_PX) {
           addRegion(pageId, final)
+          setActiveTool('select')
         }
       }
-      setCursor(regionTool ? 'crosshair' : 'grab')
+      setCursor('grab')
       schedulePaint()
+      return
+    }
+
+    if (drag?.mode === 'region-edit' && drag.regionId) {
+      const final = liveRegionEditRef.current
+      if (final && drag.moved) {
+        updateRegionBbox(pageId, drag.regionId, final)
+      }
+      liveRegionEditRef.current = null
+      setLiveRegionEditTick((t) => t + 1)
+      setCursor('grab')
+      schedulePaint()
+      // Click without drag → keep selection and focus the panel editor.
+      if (!drag.moved) {
+        selectRegion(drag.regionId)
+        requestAnimationFrame(() => {
+          const el = document.querySelector(
+            'aside [data-selected="true"] textarea',
+          )
+          if (el instanceof HTMLTextAreaElement) {
+            el.focus()
+            const len = el.value.length
+            el.setSelectionRange(len, len)
+          }
+        })
+      }
       return
     }
 
@@ -906,11 +1087,33 @@ export function PageCanvas({
     const regionHit = hitTestRegion(regions, page.x, page.y)
     if (regionHit) {
       selectRegion(regionHit.id)
+      requestAnimationFrame(() => {
+        const el = document.querySelector(
+          'aside [data-selected="true"] textarea',
+        )
+        if (el instanceof HTMLTextAreaElement) {
+          el.focus()
+          const len = el.value.length
+          el.setSelectionRange(len, len)
+        }
+      })
       return
     }
     const hit = hitTestBubble(detail.doc.bubbles, page.x, page.y)
     if (hit) {
       selectBubble(hit.id)
+      if (mode === 'translator') {
+        requestAnimationFrame(() => {
+          const el = document.querySelector(
+            'aside [data-selected="true"] textarea',
+          )
+          if (el instanceof HTMLTextAreaElement) {
+            el.focus()
+            const len = el.value.length
+            el.setSelectionRange(len, len)
+          }
+        })
+      }
       return
     }
     selectBubble(null)

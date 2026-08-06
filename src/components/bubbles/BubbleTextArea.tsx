@@ -13,16 +13,21 @@ export function BubbleTextArea({
   layout,
   onFocus,
   onChange,
+  autoFocus = false,
+  placeholder = 'Balon metni…',
 }: {
   text: string
   layout: BubbleLayout | undefined
   onFocus: () => void
   onChange: (text: string) => void
+  autoFocus?: boolean
+  placeholder?: string
 }) {
   const external = layoutFormattedText(layout) ?? text
   const [local, setLocal] = useState(external)
   const [focused, setFocused] = useState(false)
   const syncedRef = useRef(external)
+  const ref = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (focused || external === syncedRef.current) return
@@ -30,11 +35,23 @@ export function BubbleTextArea({
     setLocal(external)
   }, [external, focused])
 
+  useEffect(() => {
+    if (!autoFocus) return
+    const node = ref.current
+    if (!node) return
+    node.focus()
+    // Place caret at end so a single click is ready to type.
+    const len = node.value.length
+    node.setSelectionRange(len, len)
+  }, [autoFocus])
+
   return (
     <textarea
+      ref={ref}
       value={local}
       rows={3}
       spellCheck={false}
+      autoFocus={autoFocus}
       onFocus={() => {
         setFocused(true)
         onFocus()
@@ -45,7 +62,7 @@ export function BubbleTextArea({
         onChange(e.target.value)
       }}
       className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 py-1.5 text-[length:var(--text-ui)] leading-snug text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
-      placeholder="Balon metni…"
+      placeholder={placeholder}
     />
   )
 }

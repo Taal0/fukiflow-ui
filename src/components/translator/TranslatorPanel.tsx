@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PageDoc, PageEdit } from '@/api/types'
 import { BubbleTextArea } from '@/components/bubbles/BubbleTextArea'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -64,6 +64,11 @@ export function TranslatorPanel({
     }
     return n
   }, [items, edit])
+
+  useEffect(() => {
+    const node = listRef.current?.querySelector('[data-selected="true"]')
+    node?.scrollIntoView({ block: 'nearest' })
+  }, [selectedBubbleId, selectedRegionId])
 
   const move = (from: number, to: number) => {
     if (
@@ -134,16 +139,15 @@ export function TranslatorPanel({
               <div
                 key={`${item.kind}:${item.id}`}
                 role="listitem"
-                draggable
-                onDragStart={() => setDragIndex(index)}
+                data-selected={selected ? 'true' : undefined}
                 onDragOver={(e) => {
+                  if (dragIndex == null) return
                   e.preventDefault()
                 }}
                 onDrop={() => {
                   if (dragIndex != null) move(dragIndex, index)
                   setDragIndex(null)
                 }}
-                onDragEnd={() => setDragIndex(null)}
                 className={cn(
                   'group flex flex-col gap-1 border-b border-[var(--color-border)] px-2 py-2 transition-[background-color,opacity] duration-150',
                   selected
@@ -156,6 +160,13 @@ export function TranslatorPanel({
                   <button
                     type="button"
                     aria-label="Sırayı sürükle"
+                    draggable
+                    onDragStart={(e) => {
+                      setDragIndex(index)
+                      e.dataTransfer.effectAllowed = 'move'
+                      e.dataTransfer.setData('text/plain', String(index))
+                    }}
+                    onDragEnd={() => setDragIndex(null)}
                     className="flex h-8 w-6 shrink-0 cursor-grab items-center justify-center text-[var(--color-ink-muted)] active:cursor-grabbing"
                     tabIndex={-1}
                   >
@@ -207,8 +218,11 @@ export function TranslatorPanel({
                 {selected && (
                   <div className="pl-7 pr-1 pb-1">
                     <BubbleTextArea
+                      key={`${item.kind}:${item.id}`}
                       text={text}
                       layout={undefined}
+                      autoFocus
+                      placeholder={isRegion ? 'Kutu metni…' : 'Çeviri…'}
                       onFocus={() => {
                         if (item.kind === 'bubble')
                           onSelectBubble(Number(item.id))

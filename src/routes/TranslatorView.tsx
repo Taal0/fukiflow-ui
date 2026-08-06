@@ -23,6 +23,7 @@ import { StatusBar } from '@/components/layout/StatusBar'
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell'
 import { TranslatorPanel } from '@/components/translator/TranslatorPanel'
 import { useAutosave } from '@/hooks/useAutosave'
+import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
 import { useResizablePanel } from '@/hooks/useResizablePanel'
 import { useTranslatorKeys } from '@/hooks/useTranslatorKeys'
 import { buildWorkingDoc, orderedItems } from '@/lib/workingDoc'
@@ -30,9 +31,9 @@ import {
   applyThemeAttribute,
   GALLERY_WIDTH,
   PANEL_WIDTH,
-  translatedCountFromEdit,
   useSession,
 } from '@/store/session'
+import { toast } from '@/store/toast'
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() =>
@@ -169,6 +170,15 @@ export function TranslatorView() {
   }, [pageQuery.data, selectedPageId, hydrateEdit])
 
   useAutosave({ userId: 'translator' })
+  const {
+    pending: typesetPending,
+    error: typesetError,
+  } = useDebouncedTypeset(pageQuery.data)
+
+  useEffect(() => {
+    if (typesetError) toast(typesetError, 'danger', 5000)
+  }, [typesetError])
+
   const keys = useTranslatorKeys({
     pages,
     doc: pageQuery.data?.doc,
@@ -188,11 +198,17 @@ export function TranslatorView() {
       const session = pagesMap[p.id]
       if (!session?.hydrated) return p
       const regionN = session.edit.regions?.length ?? 0
-      const total = p.bubble_count + regionN
+      let translated = 0
+      for (const be of Object.values(session.edit.bubbles)) {
+        if (typeof be.text === 'string' && be.text.trim()) translated += 1
+      }
+      for (const r of session.edit.regions ?? []) {
+        if (r.text?.trim()) translated += 1
+      }
       return {
         ...p,
-        translated_count: translatedCountFromEdit(session.edit),
-        bubble_count: total,
+        translated_count: translated,
+        bubble_count: p.bubble_count + regionN,
       }
     })
   }, [pages, pagesMap])
@@ -219,12 +235,25 @@ export function TranslatorView() {
   }, [workingDetail, pageSession])
 
   const pageIdx = pages.findIndex((p) => p.id === selectedPageId)
-  const totalItems = workingDetail
-    ? orderedItems(workingDetail.doc, pageSession?.edit).length
-    : 0
-  const translatedN = translatedCountFromEdit(pageSession?.edit)
+  const orderStats = useMemo(() => {
+    if (!workingDetail || !pageSession) return { total: 0, translated: 0 }
+    const items = orderedItems(workingDetail.doc, pageSession.edit)
+    let translated = 0
+    for (const item of items) {
+      if (item.kind === 'bubble') {
+        if (pageSession.edit.bubbles[item.id]?.text?.trim()) translated += 1
+      } else if (
+        pageSession.edit.regions?.find((r) => r.id === item.id)?.text?.trim()
+      ) {
+        translated += 1
+      }
+    }
+    return { total: items.length, translated }
+  }, [workingDetail, pageSession])
   const pageProgress = [
-    totalItems ? `${translatedN}/${totalItems} çevrildi` : null,
+    orderStats.total
+      ? `${orderStats.translated}/${orderStats.total} çevrildi`
+      : null,
     pageIdx >= 0 ? `Sayfa ${pageIdx + 1}/${pages.length}` : null,
   ]
     .filter(Boolean)
@@ -433,7 +462,7 @@ export function TranslatorView() {
             dirty={pageSession?.dirty}
             zoomPercent={zoomPercent}
             selectedLabel={selectedLabel}
-            typesetPending={false}
+            typesetPending={typesetPending}
             hideTypeset
             pageProgress={pageProgress || null}
           />
