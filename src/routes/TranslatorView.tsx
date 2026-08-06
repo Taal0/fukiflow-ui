@@ -26,7 +26,9 @@ import { WorkspaceShell } from '@/components/layout/WorkspaceShell'
 import { TranslatorPanel } from '@/components/translator/TranslatorPanel'
 import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
+import { useHydratePageEdit } from '@/hooks/useHydratePageEdit'
 import { useResizablePanel } from '@/hooks/useResizablePanel'
+import { useResolveConflict } from '@/hooks/useResolveConflict'
 import { useTranslatorKeys } from '@/hooks/useTranslatorKeys'
 import { buildWorkingDoc, orderedItems } from '@/lib/workingDoc'
 import {
@@ -65,7 +67,6 @@ export function TranslatorView() {
   const setRegionText = useSession((s) => s.setRegionText)
   const deleteRegion = useSession((s) => s.deleteRegion)
   const reorder = useSession((s) => s.reorder)
-  const hydrateEdit = useSession((s) => s.hydrateEdit)
   const setViewMode = useSession((s) => s.setViewMode)
   const viewMode = useSession((s) => s.viewMode)
   const theme = useSession((s) => s.ui.theme)
@@ -75,8 +76,6 @@ export function TranslatorView() {
   const galleryDrawerOpen = useSession((s) => s.ui.galleryDrawerOpen)
   const patchUi = useSession((s) => s.patchUi)
   const setActiveTool = useSession((s) => s.setActiveTool)
-  const resolveConflictTakeServer = useSession((s) => s.resolveConflictTakeServer)
-  const resolveConflictKeepMine = useSession((s) => s.resolveConflictKeepMine)
   const pageSession = useSession((s) =>
     selectedPageId != null ? s.pages[selectedPageId] : undefined,
   )
@@ -175,17 +174,10 @@ export function TranslatorView() {
   const fontsQuery = useFonts()
   const fonts = fontsQuery.data ?? []
 
-  useEffect(() => {
-    if (!pageQuery.data || selectedPageId == null) return
-    if (pageQuery.data.page.id !== selectedPageId) return
-    hydrateEdit(
-      selectedPageId,
-      pageQuery.data.edit,
-      pageQuery.data.edit_rev ?? pageQuery.data.edit?.rev ?? 0,
-    )
-  }, [pageQuery.data, selectedPageId, hydrateEdit])
+  useHydratePageEdit(selectedPageId, pageQuery.data)
 
   useAutosave({ userId: 'translator' })
+  const conflict = useResolveConflict()
   const {
     pending: typesetPending,
     error: typesetError,
@@ -523,8 +515,8 @@ export function TranslatorView() {
       {selectedPageId != null && (
         <ConflictDialog
           open={pageSession?.saveStatus === 'conflict'}
-          onTakeServer={() => resolveConflictTakeServer(selectedPageId)}
-          onKeepMine={() => resolveConflictKeepMine(selectedPageId)}
+          onTakeServer={() => conflict.takeServer(selectedPageId)}
+          onKeepMine={() => conflict.keepMine(selectedPageId)}
         />
       )}
       <ShortcutsHelp

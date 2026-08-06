@@ -30,7 +30,9 @@ import { StatusBar } from '@/components/layout/StatusBar'
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell'
 import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
+import { useHydratePageEdit } from '@/hooks/useHydratePageEdit'
 import { useResizablePanel } from '@/hooks/useResizablePanel'
+import { useResolveConflict } from '@/hooks/useResolveConflict'
 import { useWorkspaceKeys } from '@/hooks/useWorkspaceKeys'
 import {
   resolveBubbleFrame,
@@ -83,7 +85,6 @@ export function WorkspaceView() {
   const setBubbleDone = useSession((s) => s.setBubbleDone)
   const setInset = useSession((s) => s.setInset)
   const clearPaintForBubble = useSession((s) => s.clearPaintForBubble)
-  const hydrateEdit = useSession((s) => s.hydrateEdit)
   const resetPageLocal = useSession((s) => s.resetPageLocal)
   const undo = useSession((s) => s.undo)
   const redo = useSession((s) => s.redo)
@@ -141,6 +142,8 @@ export function WorkspaceView() {
   const fontsQ = useFonts()
   const pageQ = usePage(selectedPageId)
 
+  useHydratePageEdit(selectedPageId, pageQ.data)
+
   useEffect(() => {
     if (selectedPageId != null || !pagesQ.data?.length) return
     selectPage(pagesQ.data[0]!.id)
@@ -154,19 +157,8 @@ export function WorkspaceView() {
     }
   }, [routeSlug, chapters.data, chapters.isLoading, navigate])
 
-  useEffect(() => {
-    if (!pageQ.data || selectedPageId == null) return
-    if (pageQ.data.page.id !== selectedPageId) return
-    hydrateEdit(
-      selectedPageId,
-      pageQ.data.edit,
-      pageQ.data.edit_rev ?? pageQ.data.edit?.rev ?? 0,
-    )
-  }, [pageQ.data, selectedPageId, hydrateEdit])
-
   const { retrySave } = useAutosave()
-  const resolveConflictTakeServer = useSession((s) => s.resolveConflictTakeServer)
-  const resolveConflictKeepMine = useSession((s) => s.resolveConflictKeepMine)
+  const conflict = useResolveConflict()
 
   const {
     pending: typesetPending,
@@ -465,11 +457,11 @@ export function WorkspaceView() {
       <ConflictDialog
         open={pageSession?.saveStatus === 'conflict'}
         onTakeServer={() => {
-          if (selectedPageId != null) resolveConflictTakeServer(selectedPageId)
+          if (selectedPageId != null) conflict.takeServer(selectedPageId)
         }}
         onKeepMine={() => {
           if (selectedPageId == null) return
-          resolveConflictKeepMine(selectedPageId)
+          conflict.keepMine(selectedPageId)
           retrySave(selectedPageId)
         }}
       />

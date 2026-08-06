@@ -88,7 +88,7 @@ interface SessionState {
   requestZoom: (kind: 'fit' | '100' | 'set', scale?: number) => void
   openGuide: () => void
 
-  /** Load server overlay into session (no-op if dirty local edits exist). */
+  /** Load server overlay into session (skips if dirty or incoming rev is stale). */
   hydrateEdit: (pageId: number, edit: PageEdit | null | undefined, rev?: number) => void
   /** Force-replace overlay after successful save or reset. */
   setEditFromServer: (pageId: number, edit: PageEdit) => void
@@ -148,8 +148,8 @@ interface SessionState {
   syncRevFromServer: (pageId: number, rev: number) => void
   /** Surface a 409: keep local edit visible, stash server copy for resolution. */
   setConflict: (pageId: number, serverEdit: PageEdit) => void
-  /** Resolve 409 by replacing local overlay with the server copy. */
-  resolveConflictTakeServer: (pageId: number) => void
+  /** Resolve 409 by replacing local overlay with the server copy. Returns the adopted edit. */
+  resolveConflictTakeServer: (pageId: number) => PageEdit | null
   /** Resolve 409 by keeping local overlay and bumping rev to server's. */
   resolveConflictKeepMine: (pageId: number) => void
 
@@ -578,7 +578,12 @@ export const useSession = create<SessionState>((set, get) => ({
       const cur = ensurePage(s.pages, pageId)
       // Don't clobber in-progress local edits.
       if (cur.dirty) return {}
-      const next = edit ? cloneEdit(edit) : emptyEdit(rev ?? 0)
+      const incomingRev = rev ?? edit?.rev ?? 0
+      const currentRev = cur.edit?.rev ?? 0
+      // Don't replace a newer (or equal) local overlay with a stale page-query
+      // snapshot — e.g. Translator saved, then Letterer remounted with 1h cache.
+      if (cur.hydrated && incomingRev <= currentRev) return {}
+      const next = edit ? cloneEdit(edit) : emptyEdit(incomingRev)
       if (rev != null) next.rev = rev
       next.regions = next.regions ?? []
       next.order = next.order ?? []
@@ -1080,15 +1085,17 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 
   resolveConflictTakeServer: (pageId) => {
+    let adoptedEdit: PageEdit | null = null
     set((s) => {
       const cur = ensurePage(s.pages, pageId)
       if (!cur.conflictServer) return {}
+      adoptedEdit = cloneEdit(cur.conflictServer)
       return {
         pages: {
           ...s.pages,
           [pageId]: {
             ...cur,
-            edit: cloneEdit(cur.conflictServer),
+            edit: adoptedEdit,
             conflictServer: null,
             dirty: false,
             saveStatus: 'saved',
@@ -1103,6 +1110,7 @@ export const useSession = create<SessionState>((set, get) => ({
         },
       }
     })
+    return adoptedEdit
   },
 
   resolveConflictKeepMine: (pageId) => {

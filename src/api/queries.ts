@@ -1,9 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type TypesetBody, type TypesetResult } from './client'
+import {
+  applyPageEditToCache,
+  clearPageEditInCache,
+  invalidateChapterOverlayLists,
+  pageQueryKey,
+} from './pageCache'
 import type { PageEdit } from './types'
 
-/** Seed data is immutable for the demo — keep it warm. */
-const SEED_STALE = 1000 * 60 * 60
+/** Truly immutable catalogs (fonts, seed asset URLs don't change mid-session). */
+const IMMUTABLE_STALE = 1000 * 60 * 60
+
+/**
+ * PageDetail mixes immutable seed doc with a mutable PageEdit overlay.
+ * Keep a short stale window and always revalidate on mount/focus so role
+ * switches (Translator ↔ Letterer) and tab returns see the latest overlay.
+ * Mutations still patch the cache immediately so we don't wait on the network.
+ */
+const PAGE_STALE = 10_000
 
 export function useChapters() {
   return useQuery({
@@ -33,10 +47,12 @@ export function useChapterProgress(slug: string | undefined) {
 
 export function usePage(pageId: number | null | undefined) {
   return useQuery({
-    queryKey: ['pages', pageId],
+    queryKey: pageId != null ? pageQueryKey(pageId) : ['pages', 'none'],
     queryFn: () => api.page(pageId!),
     enabled: pageId != null,
-    staleTime: SEED_STALE,
+    staleTime: PAGE_STALE,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     // Keep the previous page on screen while the next one fetches — otherwise
     // PageCanvas unmounts and the fit-to-view race blanks the viewport.
     placeholderData: (previous) => previous,
@@ -47,7 +63,7 @@ export function useFonts() {
   return useQuery({
     queryKey: ['fonts'],
     queryFn: api.fonts,
-    staleTime: SEED_STALE,
+    staleTime: IMMUTABLE_STALE,
     retry: 1,
   })
 }
@@ -81,15 +97,15 @@ export function useSavePageEditMutation() {
       user_id?: string | null
       signal?: AbortSignal
     }) => api.putPageEdit(pageId, { rev, edit, user_id }),
-    onSuccess: () => {
-      // Refresh gallery progress only — don't refetch the open page doc
-      // (client already has the overlay; a mid-edit refetch races hydrate).
-      void qc.invalidateQueries({
-        predicate: (q) =>
-          Array.isArray(q.queryKey) &&
-          q.queryKey[0] === 'chapters' &&
-          (q.queryKey[2] === 'progress' || q.queryKey[2] === 'pages'),
+    onSuccess: async (result, { pageId }) => {
+      // Drop in-flight GETs so a late refetch can't stomp this write.
+      await qc.cancelQueries({ queryKey: pageQueryKey(pageId) })
+      applyPageEditToCache(qc, pageId, {
+        edit: result.edit,
+        rev: result.rev,
+        author: result.author,
       })
+      invalidateChapterOverlayLists(qc)
     },
   })
 }
@@ -98,14 +114,11 @@ export function useDeletePageEditMutation() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (pageId: number) => api.deletePageEdit(pageId),
-    onSuccess: (_data, pageId) => {
-      void qc.invalidateQueries({
-        predicate: (q) =>
-          Array.isArray(q.queryKey) &&
-          q.queryKey[0] === 'chapters' &&
-          (q.queryKey[2] === 'progress' || q.queryKey[2] === 'pages'),
-      })
-      void qc.invalidateQueries({ queryKey: ['pages', pageId] })
+    onSuccess: async (_data, pageId) => {
+      await qc.cancelQueries({ queryKey: pageQueryKey(pageId) })
+      clearPageEditInCache(qc, pageId)
+      invalidateChapterOverlayLists(qc)
+      void qc.invalidateQueries({ queryKey: pageQueryKey(pageId) })
     },
   })
 }
@@ -128,7 +141,7 @@ export function useDeletePageMutation() {
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ['chapters'] })
       void qc.invalidateQueries({ queryKey: ['chapters', data.slug] })
-      void qc.removeQueries({ queryKey: ['pages', data.page_id] })
+      void qc.removeQueries({ queryKey: pageQueryKey(data.page_id) })
       if (data.chapter_deleted) {
         void qc.removeQueries({ queryKey: ['chapters', data.slug] })
       }

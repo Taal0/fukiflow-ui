@@ -31,16 +31,19 @@ function contentFingerprint(edit: PageEdit): string {
   })
 }
 
-/**
- * Persist dirty PageEdit overlays.
- *
- * Serial per page: never abort an in-flight PUT. After success, if still dirty,
- * schedule another debounced save (never tight-loop in finally).
- * On 409: surface conflict UI (keep local visible; stash server copy) — no
- * silent last-write-wins. User chooses take-server or keep-mine.
- *
- * Returns ``retrySave`` for the toolbar when saveStatus is error.
- */
+  /**
+   * Persist dirty PageEdit overlays across the whole app (any role view).
+   *
+   * Serial per page: never abort an in-flight PUT. After success, if still dirty,
+   * schedule another debounced save (never tight-loop in finally).
+   * On 409: surface conflict UI (keep local visible; stash server copy) — no
+   * silent last-write-wins. User chooses take-server or keep-mine.
+   *
+   * Unmount flushes pending debounce timers so a quick role/route switch still
+   * lands the write.
+   *
+   * Returns ``retrySave`` for the toolbar when saveStatus is error.
+   */
 export function useAutosave(opts?: { userId?: string | null }) {
   const userId = opts?.userId ?? null
   const dirtyKey = useSession((s) => {
@@ -190,8 +193,16 @@ export function useAutosave(opts?: { userId?: string | null }) {
 
   useEffect(() => {
     return () => {
+      // Flush pages that were waiting on debounce so a quick Translator →
+      // Letterer switch still persists before the timer would have fired.
+      const pendingIds = [...timerByPage.current.keys()]
       for (const t of timerByPage.current.values()) clearTimeout(t)
       timerByPage.current.clear()
+      for (const pageId of pendingIds) {
+        savePageRef.current(pageId).catch((err) => {
+          console.error(`[useAutosave] Unmount flush failed for page ${pageId}:`, err)
+        })
+      }
     }
   }, [])
 
