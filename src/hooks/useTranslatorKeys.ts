@@ -30,8 +30,9 @@ export const TRANSLATOR_SHORTCUTS: ReadonlyArray<{
   { group: 'Sıra', keys: 'N / Tab', label: 'Sonraki öğe' },
   { group: 'Sıra', keys: 'P / ⇧Tab', label: 'Önceki öğe' },
   { group: 'Sıra', keys: 'Alt+↑ / Alt+↓', label: 'Sırada taşı' },
+  { group: 'Sıra', keys: 'Delete / ⌫', label: 'Balonu / kutuyu sil' },
   { group: 'Araçlar', keys: 'V', label: 'Seç' },
-  { group: 'Araçlar', keys: 'R', label: 'Metin kutusu' },
+  { group: 'Araçlar', keys: 'R', label: 'Kutu türü seç (Bubble / SFX / Other)' },
   { group: 'Genel', keys: 'Esc', label: 'Çizimi iptal / select' },
   { group: 'Genel', keys: '?', label: 'Kısayollar paneli' },
   {
@@ -55,8 +56,11 @@ export function useTranslatorKeys({
   const selectedPageId = useSession((s) => s.selectedPageId)
   const setViewMode = useSession((s) => s.setViewMode)
   const setActiveTool = useSession((s) => s.setActiveTool)
+  const setRegionKind = useSession((s) => s.setRegionKind)
   const activeTool = useSession((s) => s.ui.activeTool)
   const reorder = useSession((s) => s.reorder)
+  const deleteBubble = useSession((s) => s.deleteBubble)
+  const deleteRegion = useSession((s) => s.deleteRegion)
   const undo = useSession((s) => s.undo)
   const redo = useSession((s) => s.redo)
   const pageSession = useSession((s) =>
@@ -147,6 +151,7 @@ export function useTranslatorKeys({
       if (e.key === 'r' || e.key === 'R') {
         e.preventDefault()
         setActiveTool('region')
+        setRegionKind(null)
         return
       }
 
@@ -210,6 +215,20 @@ export function useTranslatorKeys({
         return
       }
 
+      // Hard-delete selected bubble or region
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (pageSession?.selectedRegionId) {
+          e.preventDefault()
+          deleteRegion(pageId, pageSession.selectedRegionId)
+          return
+        }
+        if (pageSession?.selectedBubbleId != null) {
+          e.preventDefault()
+          deleteBubble(pageId, pageSession.selectedBubbleId)
+          return
+        }
+      }
+
       const goNext =
         e.key === 'n' ||
         e.key === 'N' ||
@@ -253,7 +272,10 @@ export function useTranslatorKeys({
     selectRegion,
     setViewMode,
     setActiveTool,
+    setRegionKind,
     reorder,
+    deleteBubble,
+    deleteRegion,
     undo,
     redo,
   ])

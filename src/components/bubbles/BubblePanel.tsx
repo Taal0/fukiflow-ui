@@ -23,6 +23,7 @@ import {
   useSession,
 } from '@/store/session'
 import { cn } from '@/lib/utils'
+import { toast } from '@/store/toast'
 
 interface BubblePanelProps {
   doc: PageDoc
@@ -50,6 +51,7 @@ interface BubblePanelProps {
   onAutoTypeset: (bubbleId: number) => void
   onToggleDone: (bubbleId: number, done: boolean) => void
   onInset: (bubbleId: number, inset: number | null) => void
+  onDeleteBubble?: (bubbleId: number) => void
 }
 
 function matchesFilter(
@@ -96,6 +98,7 @@ export function BubblePanel({
   onAutoTypeset,
   onToggleDone,
   onInset,
+  onDeleteBubble,
 }: BubblePanelProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const filter = useSession((s) => s.ui.bubbleFilter)
@@ -258,11 +261,16 @@ export function BubblePanel({
                 if (row.kind === 'region') {
                   const preview =
                     row.region.text.replace(/\s+/g, ' ').trim() || '—'
+                  const unconfirmed = row.region.status === 'unconfirmed'
                   return (
                     <li key={row.region.id}>
                       <div
                         className="flex h-10 w-full items-center gap-2 rounded-md px-2 text-[var(--color-ink-muted)]"
-                        title="Çevirmen kutusu (salt okunur)"
+                        title={
+                          unconfirmed
+                            ? 'Doğrulanamadı — otomatik clean/dizgi yok'
+                            : 'Çevirmen kutusu (salt okunur)'
+                        }
                       >
                         <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded border border-dashed border-[var(--color-focus)] px-1 text-[length:var(--text-meta)] font-semibold tabular-nums text-[var(--color-focus)]">
                           R{row.index}
@@ -270,6 +278,11 @@ export function BubblePanel({
                         <span className="min-w-0 flex-1 truncate text-[length:var(--text-ui)]">
                           {preview}
                         </span>
+                        {unconfirmed && (
+                          <span className="shrink-0 rounded px-1.5 py-0.5 text-[length:var(--text-meta)] font-medium text-[#c2410c]">
+                            Doğrulanamadı
+                          </span>
+                        )}
                       </div>
                     </li>
                   )
@@ -293,6 +306,17 @@ export function BubblePanel({
                     selected={bubble.id === selectedBubbleId}
                     typesetPending={typesetPending}
                     onSelect={() => onSelect(bubble.id)}
+                    onDelete={
+                      onDeleteBubble
+                        ? () => {
+                            onDeleteBubble(bubble.id)
+                            toast(
+                              'Balon silindi — ⌘Z ile geri alın',
+                              'info',
+                            )
+                          }
+                        : undefined
+                    }
                   />
                 )
               })}

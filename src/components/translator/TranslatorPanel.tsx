@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { PageDoc, PageEdit } from '@/api/types'
+import type { PageDoc, PageEdit, RegionKind } from '@/api/types'
 import { BubbleTextArea } from '@/components/bubbles/BubbleTextArea'
 import { EmptyState } from '@/components/ui/empty-state'
 import {
@@ -8,7 +8,7 @@ import {
   type OrderedItem,
 } from '@/lib/workingDoc'
 import { displayText } from '@/components/bubbles/bubbleUtils'
-import { useSession } from '@/store/session'
+import { requestRegionKindPick } from '@/components/canvas/ToolRail'
 import { cn } from '@/lib/utils'
 import { GripVertical, Trash2 } from 'lucide-react'
 import { toast } from '@/store/toast'
@@ -24,11 +24,36 @@ interface TranslatorPanelProps {
   onBubbleText: (id: number, text: string) => void
   onRegionText: (id: string, text: string) => void
   onDeleteRegion: (id: string) => void
+  onDeleteBubble: (id: number) => void
   onReorder: (tokens: string[]) => void
 }
 
 function itemToken(item: OrderedItem): string {
   return item.kind === 'bubble' ? bubbleOrderToken(Number(item.id)) : item.id
+}
+
+function regionKindLabel(kind: RegionKind | undefined): string {
+  switch (kind) {
+    case 'sfx':
+      return 'S'
+    case 'other':
+      return 'O'
+    case 'bubble':
+    default:
+      return 'B'
+  }
+}
+
+function regionKindTitle(kind: RegionKind | undefined): string {
+  switch (kind) {
+    case 'sfx':
+      return 'SFX'
+    case 'other':
+      return 'Other'
+    case 'bubble':
+    default:
+      return 'Bubble'
+  }
 }
 
 export function TranslatorPanel({
@@ -42,11 +67,11 @@ export function TranslatorPanel({
   onBubbleText,
   onRegionText,
   onDeleteRegion,
+  onDeleteBubble,
   onReorder,
 }: TranslatorPanelProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const setActiveTool = useSession((s) => s.setActiveTool)
 
   const items = useMemo(() => orderedItems(doc, edit), [doc, edit])
   const tokens = useMemo(() => items.map(itemToken), [items])
@@ -107,7 +132,7 @@ export function TranslatorPanel({
           title="Bu sayfada balon yok"
           description="R ile kutu çizip metin ekleyin"
           actionLabel="Kutu çiz"
-          onAction={() => setActiveTool('region')}
+          onAction={() => requestRegionKindPick()}
         />
       ) : (
         <div
@@ -135,11 +160,25 @@ export function TranslatorPanel({
                 ? Boolean(edit.bubbles[item.id]?.text?.trim())
                 : Boolean(region?.text?.trim())
 
+            const selectItem = () => {
+              if (item.kind === 'bubble') onSelectBubble(Number(item.id))
+              else onSelectRegion(item.id)
+            }
+
             return (
               <div
                 key={`${item.kind}:${item.id}`}
                 role="listitem"
                 data-selected={selected ? 'true' : undefined}
+                onClick={selectItem}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    selectItem()
+                  }
+                }}
+                tabIndex={0}
                 onDragOver={(e) => {
                   if (dragIndex == null) return
                   e.preventDefault()
@@ -149,7 +188,7 @@ export function TranslatorPanel({
                   setDragIndex(null)
                 }}
                 className={cn(
-                  'group flex flex-col gap-1 border-b border-[var(--color-border)] px-2 py-2 transition-[background-color,opacity] duration-150',
+                  'group flex cursor-pointer flex-col gap-1 border-b border-[var(--color-border)] px-2 py-2 transition-[background-color,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus)]',
                   selected
                     ? 'bg-[var(--color-accent-soft)]'
                     : 'hover:bg-[var(--color-surface-muted)]',
@@ -161,6 +200,7 @@ export function TranslatorPanel({
                     type="button"
                     aria-label="Sırayı sürükle"
                     draggable
+                    onClick={(e) => e.stopPropagation()}
                     onDragStart={(e) => {
                       setDragIndex(index)
                       e.dataTransfer.effectAllowed = 'move'
@@ -172,14 +212,7 @@ export function TranslatorPanel({
                   >
                     <GripVertical className="h-3.5 w-3.5" />
                   </button>
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
-                    onClick={() => {
-                      if (item.kind === 'bubble') onSelectBubble(Number(item.id))
-                      else onSelectRegion(item.id)
-                    }}
-                  >
+                  <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
                     <span
                       className={cn(
                         'flex h-6 min-w-6 shrink-0 items-center justify-center rounded px-1 text-[length:var(--text-meta)] font-semibold tabular-nums',
@@ -187,8 +220,15 @@ export function TranslatorPanel({
                           ? 'border border-dashed border-[var(--color-focus)] text-[var(--color-focus)]'
                           : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]',
                       )}
+                      title={
+                        isRegion
+                          ? `${regionKindTitle(region?.kind)} · R${index + 1}`
+                          : undefined
+                      }
                     >
-                      {isRegion ? `R${index + 1}` : index + 1}
+                      {isRegion
+                        ? `${regionKindLabel(region?.kind)}${index + 1}`
+                        : index + 1}
                     </span>
                     <span
                       className={cn(
@@ -200,15 +240,55 @@ export function TranslatorPanel({
                     >
                       {text.trim() || (isRegion ? 'Kutu metni…' : 'Çeviri…')}
                     </span>
-                  </button>
-                  {isRegion && (
+                    {isRegion && region?.kind && region.kind !== 'bubble' && (
+                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[length:var(--text-meta)] font-medium text-[var(--color-ink-muted)]">
+                        {regionKindTitle(region.kind)}
+                      </span>
+                    )}
+                    {isRegion &&
+                      (region?.kind ?? 'bubble') === 'bubble' &&
+                      region?.status === 'unconfirmed' && (
+                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[length:var(--text-meta)] font-medium text-[#c2410c]">
+                        Doğrulanamadı
+                      </span>
+                    )}
+                    {isRegion &&
+                      (region?.kind ?? 'bubble') === 'bubble' &&
+                      region?.status === 'verifying' && (
+                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[length:var(--text-meta)] font-medium text-[#d97706]">
+                        Doğrulanıyor…
+                      </span>
+                    )}
+                    {isRegion &&
+                      (region?.kind ?? 'bubble') === 'bubble' &&
+                      region?.status === 'confirmed' && (
+                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[length:var(--text-meta)] font-medium text-[#15803d]">
+                        Onaylandı
+                      </span>
+                    )}
+                  </div>
+                  {isRegion ? (
                     <button
                       type="button"
                       aria-label="Kutuyu sil"
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-[var(--color-ink-muted)] opacity-0 hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] group-hover:opacity-100"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation()
                         onDeleteRegion(item.id)
                         toast('Kutu silindi — ⌘Z ile geri alın', 'info')
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label="Balonu sil"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-[var(--color-ink-muted)] opacity-0 hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDeleteBubble(Number(item.id))
+                        toast('Balon silindi — ⌘Z ile geri alın', 'info')
                       }}
                     >
                       <Trash2 className="h-3.5 w-3.5" />

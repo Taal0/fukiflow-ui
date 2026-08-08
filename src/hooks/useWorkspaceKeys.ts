@@ -36,6 +36,7 @@ export const WORKSPACE_SHORTCUTS: ReadonlyArray<{
   { group: 'Balon', keys: 'N / Tab', label: 'Sonraki balon' },
   { group: 'Balon', keys: 'P / ⇧Tab', label: 'Önceki balon' },
   { group: 'Balon', keys: 'D', label: 'Bitti işaretle' },
+  { group: 'Balon', keys: 'Delete / ⌫', label: 'Balonu sil' },
   { group: 'Balon', keys: 'C', label: 'Clean katmanı aç/kapa' },
   { group: 'Balon', keys: 'T', label: 'Metin katmanı aç/kapa' },
   { group: 'Kutu', keys: '←↑↓→', label: 'Kutuyu 1 px kaydır' },
@@ -63,6 +64,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const setViewMode = useSession((s) => s.setViewMode)
   const toggleLayer = useSession((s) => s.toggleLayer)
   const toggleBubbleDone = useSession((s) => s.toggleBubbleDone)
+  const deleteBubble = useSession((s) => s.deleteBubble)
   const setFrame = useSession((s) => s.setFrame)
   const setBrushMode = useSession((s) => s.setBrushMode)
   const setBrushRadius = useSession((s) => s.setBrushRadius)
@@ -241,6 +243,16 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
         return
       }
 
+      // Hard-delete selected bubble
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        selected != null
+      ) {
+        e.preventDefault()
+        deleteBubble(pageId, selected)
+        return
+      }
+
       // Toggle layers for selected bubble
       if ((e.key === 'c' || e.key === 'C') && selected != null) {
         e.preventDefault()
@@ -281,6 +293,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     setViewMode,
     toggleLayer,
     toggleBubbleDone,
+    deleteBubble,
     setFrame,
     setBrushMode,
     setBrushRadius,

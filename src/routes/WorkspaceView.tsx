@@ -84,6 +84,7 @@ export function WorkspaceView() {
   const setFrame = useSession((s) => s.setFrame)
   const setBubbleDone = useSession((s) => s.setBubbleDone)
   const setInset = useSession((s) => s.setInset)
+  const deleteBubble = useSession((s) => s.deleteBubble)
   const clearPaintForBubble = useSession((s) => s.clearPaintForBubble)
   const resetPageLocal = useSession((s) => s.resetPageLocal)
   const undo = useSession((s) => s.undo)
@@ -219,7 +220,12 @@ export function WorkspaceView() {
     return (pagesQ.data ?? []).map((p) => {
       const session = sessionPages[p.id]
       if (!session?.hydrated) return p
-      return { ...p, done_count: doneCountFromEdit(session.edit) }
+      const removedN = session.edit.removed_bubbles?.length ?? 0
+      return {
+        ...p,
+        done_count: doneCountFromEdit(session.edit),
+        bubble_count: Math.max(0, p.bubble_count - removedN),
+      }
     })
   }, [pagesQ.data, sessionPages])
 
@@ -435,6 +441,10 @@ export function WorkspaceView() {
         onInset={(bubbleId, inset) => {
           if (selectedPageId == null) return
           setInset(selectedPageId, bubbleId, inset)
+        }}
+        onDeleteBubble={(bubbleId) => {
+          if (selectedPageId == null) return
+          deleteBubble(selectedPageId, bubbleId)
         }}
       />
     </div>

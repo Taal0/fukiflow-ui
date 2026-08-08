@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { Bubble } from '@/api/types'
+import { Trash2 } from 'lucide-react'
 
 interface BubbleRowProps {
   bubble: Bubble
@@ -11,6 +12,7 @@ interface BubbleRowProps {
   selected: boolean
   typesetPending?: boolean
   onSelect: () => void
+  onDelete?: () => void
 }
 
 export function BubbleRow({
@@ -22,18 +24,19 @@ export function BubbleRow({
   selected,
   typesetPending,
   onSelect,
+  onDelete,
 }: BubbleRowProps) {
   const preview = text.replace(/\s+/g, ' ').trim() || '—'
 
   return (
-    <li>
+    <li className="group flex items-center gap-0.5">
       <button
         type="button"
         data-selected={selected || undefined}
         onClick={onSelect}
         title={`Balon #${bubble.id}`}
         className={cn(
-          'flex h-10 w-full items-center gap-2 rounded-md px-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus)]',
+          'flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus)]',
           selected
             ? 'bg-[var(--color-selection)] ring-1 ring-[var(--color-accent)]'
             : 'hover:bg-[var(--color-surface-muted)]',
@@ -58,6 +61,19 @@ export function BubbleRow({
           {done && <Badge variant="ok">Bitti</Badge>}
         </span>
       </button>
+      {onDelete && (
+        <button
+          type="button"
+          aria-label="Balonu sil"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-[var(--color-ink-muted)] opacity-0 hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] group-hover:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
     </li>
   )
 }
