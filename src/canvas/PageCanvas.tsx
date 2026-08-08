@@ -525,7 +525,10 @@ export function PageCanvas({
             if (r) badges.push({ kind: 'region', id: r.id, bbox: r.bbox, index: i + 1 })
           }
         })
-        drawOrderBadges(ctx, badges, t.scale || 1)
+        drawOrderBadges(ctx, badges, t.scale || 1, {
+          selectedBubbleId,
+          selectedRegionId,
+        })
       }
       ctx.restore()
     }

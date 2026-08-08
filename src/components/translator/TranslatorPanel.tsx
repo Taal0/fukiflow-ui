@@ -215,10 +215,12 @@ export function TranslatorPanel({
                   <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
                     <span
                       className={cn(
-                        'flex h-6 min-w-6 shrink-0 items-center justify-center rounded px-1 text-[length:var(--text-meta)] font-semibold tabular-nums',
-                        isRegion
-                          ? 'border border-dashed border-[var(--color-focus)] text-[var(--color-focus)]'
-                          : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]',
+                        'flex h-6 min-w-6 shrink-0 items-center justify-center rounded px-1.5 text-[length:var(--text-ui)] font-bold tabular-nums',
+                        selected
+                          ? 'bg-[var(--color-accent)] text-[var(--color-surface-raised)]'
+                          : isRegion
+                            ? 'bg-[var(--color-ink)] text-[var(--color-surface-raised)] ring-1 ring-[var(--color-focus)]'
+                            : 'bg-[var(--color-ink)] text-[var(--color-surface-raised)]',
                       )}
                       title={
                         isRegion

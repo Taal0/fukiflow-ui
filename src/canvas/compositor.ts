@@ -206,39 +206,115 @@ export function drawRegions(
   }
 }
 
+function cssLengthToPx(value: string, fallback: number): number {
+  const v = value.trim()
+  if (!v) return fallback
+  const n = parseFloat(v)
+  if (!Number.isFinite(n)) return fallback
+  if (v.endsWith('rem')) {
+    const rootPx =
+      typeof getComputedStyle !== 'undefined'
+        ? parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+        : 16
+    return n * rootPx
+  }
+  return n
+}
+
+function roundRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  const radius = Math.min(r, w / 2, h / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + radius, y)
+  ctx.arcTo(x + w, y, x + w, y + h, radius)
+  ctx.arcTo(x + w, y + h, x, y + h, radius)
+  ctx.arcTo(x, y + h, x, y, radius)
+  ctx.arcTo(x, y, x + w, y, radius)
+  ctx.closePath()
+}
+
 /** Order badges at top-left of each item bbox (visible overlay only). */
 export function drawOrderBadges(
   ctx: CanvasRenderingContext2D,
   items: OrderBadgeItem[],
   scale: number,
+  opts?: {
+    selectedBubbleId?: number | null
+    selectedRegionId?: string | null
+  },
 ): void {
-  const meta =
+  const root =
     typeof getComputedStyle !== 'undefined'
       ? getComputedStyle(document.documentElement)
-          .getPropertyValue('--text-meta')
-          .trim()
-      : ''
-  const fontPx = Math.max(10, (parseFloat(meta) || 11) / scale)
+      : null
+  const ink = root?.getPropertyValue('--color-ink').trim() || '#16181b'
+  const raised =
+    root?.getPropertyValue('--color-surface-raised').trim() || '#ffffff'
+  const accent =
+    root?.getPropertyValue('--color-accent').trim() || '#c8391f'
+  const focus =
+    root?.getPropertyValue('--color-focus').trim() || '#2a6fdb'
+  const fontSans =
+    root?.getPropertyValue('--font-sans').trim() ||
+    'ui-sans-serif, system-ui, sans-serif'
+  // Keep ~13px on screen across zoom (was stuck at ~10 page-px via rem parse).
+  const screenPx = Math.max(
+    13,
+    cssLengthToPx(root?.getPropertyValue('--text-ui') ?? '', 12),
+  )
+  const s = Math.max(scale, 0.001)
+  const fontPx = screenPx / s
+  const padX = 4 / s
+  const padY = 3 / s
+  const gap = 2 / s
+  const radius = 2 / s
+  const lineW = Math.max(1 / s, 1.25 / s)
+
   ctx.save()
-  ctx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`
+  ctx.font = `700 ${fontPx}px ${fontSans}`
   ctx.textBaseline = 'top'
   for (const item of items) {
     const [x0, y0] = item.bbox
     const label =
       item.kind === 'region' ? `R${item.index}` : String(item.index)
-    const pad = 2 / scale
+    const selected =
+      item.kind === 'bubble'
+        ? opts?.selectedBubbleId != null &&
+          String(opts.selectedBubbleId) === item.id
+        : opts?.selectedRegionId != null &&
+          opts.selectedRegionId === item.id
     const metrics = ctx.measureText(label)
-    const tw = metrics.width + pad * 2
-    const th = fontPx + pad * 2
+    const tw = metrics.width + padX * 2
+    const th = fontPx + padY * 2
     const bx = x0
-    const by = Math.max(0, y0 - th - 2 / scale)
-    ctx.fillStyle = 'rgba(255,255,255,0.92)'
-    ctx.fillRect(bx, by, tw, th)
-    ctx.strokeStyle = 'rgba(0,0,0,0.18)'
-    ctx.lineWidth = Math.max(0.5, 1 / scale)
-    ctx.strokeRect(bx, by, tw, th)
-    ctx.fillStyle = '#3a3a3a'
-    ctx.fillText(label, bx + pad, by + pad)
+    const by = Math.max(0, y0 - th - gap)
+
+    // Dark chip + light type reads on both white and ink-heavy manga panels.
+    ctx.fillStyle = selected ? accent : ink
+    roundRectPath(ctx, bx, by, tw, th, radius)
+    ctx.fill()
+
+    // Light halo separates the chip from black panel borders.
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+    ctx.lineWidth = lineW
+    roundRectPath(ctx, bx, by, tw, th, radius)
+    ctx.stroke()
+
+    if (!selected && item.kind === 'region') {
+      ctx.strokeStyle = focus
+      ctx.lineWidth = lineW
+      roundRectPath(ctx, bx, by, tw, th, radius)
+      ctx.stroke()
+    }
+
+    ctx.fillStyle = raised
+    ctx.fillText(label, bx + padX, by + padY)
   }
   ctx.restore()
 }
