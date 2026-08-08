@@ -12,11 +12,12 @@ import {
   BubbleRow,
 } from '@/components/bubbles/BubbleRow'
 import {
-  bubbleBadges,
   displayText,
   layoutForBubble,
 } from '@/components/bubbles/bubbleUtils'
+import { bubbleFlags } from '@/components/flags'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Button } from '@/components/ui/button'
 import { orderedItems } from '@/lib/workingDoc'
 import {
   type BubbleFilter,
@@ -69,7 +70,7 @@ function matchesFilter(
   }
   if (filter === 'undone') return !be?.done
   if (filter === 'overflow') return Boolean(layout?.overflow)
-  if (filter === 'editor') return bubble.clean_status === 'editor'
+  if (filter === 'flag') return bubbleFlags(bubble, layout).length > 0
   return true
 }
 
@@ -130,6 +131,22 @@ export function BubblePanel({
   const doneCount = bubbles.filter(
     (b) => bubbleEdits[String(b.id)]?.done,
   ).length
+
+  const flagStats = useMemo(() => {
+    let total = 0
+    let open = 0
+    let firstOpenId: number | null = null
+    for (const b of bubbles) {
+      const layout = layoutForBubble(b.id, layoutsByBubble, doc.layers)
+      if (bubbleFlags(b, layout).length === 0) continue
+      total += 1
+      if (!bubbleEdits[String(b.id)]?.done) {
+        open += 1
+        if (firstOpenId == null) firstOpenId = b.id
+      }
+    }
+    return { total, open, firstOpenId }
+  }, [bubbles, layoutsByBubble, doc.layers, bubbleEdits])
 
   const visible = useMemo(
     () =>
@@ -209,13 +226,20 @@ export function BubblePanel({
     window.addEventListener('pointerup', onUp)
   }
 
+  const startReview = () => {
+    patchUi({ bubbleFilter: 'flag' })
+    if (flagStats.firstOpenId != null) onSelect(flagStats.firstOpenId)
+  }
+
+  const flagEmpty = filter === 'flag' && flagStats.open === 0 && !search.trim()
+
   return (
     <aside
       style={{ width }}
       className="relative flex h-full shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)]"
     >
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
-        <div>
+        <div className="min-w-0 flex-1">
           <h2 className="text-[length:var(--text-ui)] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
             Balonlar
           </h2>
@@ -223,12 +247,29 @@ export function BubblePanel({
             {doneCount}/{bubbles.length} bitti
             {typesetPending ? ' · Dizgi…' : ''}
           </p>
+          {flagStats.total > 0 && (
+            <div className="mt-0.5 flex items-center justify-between gap-2">
+              <p className="text-[length:var(--text-meta)] tabular-nums text-[var(--color-ink-muted)]">
+                {flagStats.total} inceleme · {flagStats.open} kaldı
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 shrink-0 px-2 text-[length:var(--text-meta)]"
+                onClick={startReview}
+              >
+                İncele
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
       <BubbleFilters
         filter={filter}
         search={search}
+        flagOpenCount={flagStats.open}
         onFilterChange={(f) => patchUi({ bubbleFilter: f })}
         onSearchChange={(q) => patchUi({ bubbleSearch: q })}
       />
@@ -239,7 +280,15 @@ export function BubblePanel({
           style={{ flexBasis: `${listPct}%` }}
           className="min-h-0 flex-shrink overflow-y-auto p-1.5"
         >
-          {listRows.length === 0 ? (
+          {flagEmpty ? (
+            <EmptyState
+              title="İnceleme kalmadı"
+              description="Bu sayfadaki tüm bayraklar kapandı."
+              actionLabel="Tüm balonlar"
+              onAction={() => patchUi({ bubbleFilter: 'all', bubbleSearch: '' })}
+              className="py-6"
+            />
+          ) : listRows.length === 0 ? (
             <EmptyState
               title={bubbles.length === 0 ? 'Balon yok' : 'Sonuç yok'}
               description={
@@ -301,7 +350,7 @@ export function BubblePanel({
                     bubble={bubble}
                     order={row.index}
                     text={text}
-                    badges={bubbleBadges(bubble, layout)}
+                    badges={bubbleFlags(bubble, layout).map((f) => f.label)}
                     done={Boolean(be?.done)}
                     selected={bubble.id === selectedBubbleId}
                     typesetPending={typesetPending}

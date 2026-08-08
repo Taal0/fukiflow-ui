@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type {
   Bubble,
   BubbleEdit,
@@ -9,9 +10,11 @@ import type {
 import { cleanLayerId, textLayerId } from '@/api/types'
 import { BubbleTextArea } from '@/components/bubbles/BubbleTextArea'
 import { displayText, seedText } from '@/components/bubbles/bubbleUtils'
+import { bubbleFlags } from '@/components/flags'
 import { FontSelect } from '@/components/FontSelect'
 import { LayerRow } from '@/components/LayerRow'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/segmented'
 import { Stepper } from '@/components/ui/stepper'
@@ -23,6 +26,7 @@ import {
   INSET_MIN,
   resolveCleanInset,
 } from '@/lib/paintStroke'
+import { useSession } from '@/store/session'
 
 const FONT_PX_MIN = 8
 const FONT_PX_MAX = 96
@@ -79,6 +83,9 @@ export function BubbleInspector({
   onToggleDone,
   onInset,
 }: BubbleInspectorProps) {
+  const setActiveTool = useSession((s) => s.setActiveTool)
+  const [focusText, setFocusText] = useState(false)
+
   if (!bubble) {
     return (
       <EmptyState
@@ -99,6 +106,8 @@ export function BubbleInspector({
   const align = (be?.align as 'left' | 'center' | undefined) ?? 'center'
   const hasFrame = Boolean(be?.frame)
   const done = Boolean(be?.done)
+  const flags = bubbleFlags(bubble, layout)
+  const primary = flags[0]
   const isEditor = bubble.clean_status === 'editor'
   const clnId = cleanLayerId(bubble.id)
   const txtId = textLayerId(bubble.id)
@@ -114,6 +123,24 @@ export function BubbleInspector({
     !disabledLayerIds.has(txtId)
   const insetSeed = clnLayer?.mask?.inset ?? DEFAULT_INSET
   const insetCur = resolveCleanInset(insetSeed, be?.inset)
+
+  const runPrimaryAction = () => {
+    if (!primary) return
+    switch (primary.action.kind) {
+      case 'paint':
+        setActiveTool('paint')
+        break
+      case 'frame':
+        setActiveTool('frame')
+        break
+      case 'text':
+        setFocusText(true)
+        break
+      case 'typeset':
+        onAutoTypeset(bubble.id)
+        break
+    }
+  }
 
   return (
     <div className="flex flex-col gap-3 overflow-y-auto p-3">
@@ -134,15 +161,58 @@ export function BubbleInspector({
         </label>
       </div>
 
+      {flags.length > 0 && (
+        <section className="flex flex-col gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5">
+          <div className="flex flex-wrap items-center gap-1">
+            {flags.map((f) => (
+              <Badge key={f.code} variant={done ? 'default' : 'warn'}>
+                {f.label}
+              </Badge>
+            ))}
+          </div>
+          {primary && (
+            <p className="text-[length:var(--text-ui)] text-[var(--color-ink)]">
+              {primary.hint}
+            </p>
+          )}
+          {primary && !done && (
+            <Button
+              type="button"
+              size="sm"
+              className="self-start"
+              disabled={
+                primary.action.kind === 'typeset' &&
+                (typesetPending || !display.trim())
+              }
+              onClick={runPrimaryAction}
+            >
+              {primary.action.label}
+              {primary.action.kind === 'paint'
+                ? ' (B)'
+                : primary.action.kind === 'frame'
+                  ? ' (M)'
+                  : ''}
+            </Button>
+          )}
+          <p className="text-[length:var(--text-meta)] text-[var(--color-ink-muted)]">
+            Bitti işaretlemek incelemeyi kapatır
+          </p>
+        </section>
+      )}
+
       <section className="flex flex-col gap-2">
         <h4 className="text-[length:var(--text-meta)] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
           Metin
         </h4>
         <BubbleTextArea
-          key={bubble.id}
+          key={`${bubble.id}-${focusText ? 'focus' : 'idle'}`}
           text={display}
           layout={layout}
-          onFocus={() => onSelect(bubble.id)}
+          autoFocus={focusText}
+          onFocus={() => {
+            onSelect(bubble.id)
+            setFocusText(false)
+          }}
           onChange={(v) => onTextChange(bubble.id, v)}
         />
         {dirty && (

@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
-import type { PageDoc, PageSummary } from '@/api/types'
+import type { BubbleLayout, PageDoc, PageSummary } from '@/api/types'
 import { cleanLayerId, textLayerId } from '@/api/types'
 import {
   clampFrame,
   nudgeFrame,
   resolveBubbleFrame,
 } from '@/lib/bubbleFrame'
+import { bubbleFlags } from '@/components/flags'
+import { layoutForBubble } from '@/components/bubbles/bubbleUtils'
 import { useSession } from '@/store/session'
+import { toast } from '@/store/toast'
 
 interface Args {
   pages: PageSummary[]
@@ -18,6 +21,18 @@ function orderedBubbles(doc: PageDoc) {
   return [...doc.bubbles].sort(
     (a, b) => (a.reading_order ?? a.id) - (b.reading_order ?? b.id),
   )
+}
+
+function openFlaggedBubbles(
+  doc: PageDoc,
+  layoutsByBubble: Record<number, BubbleLayout>,
+  editBubbles: Record<string, { done?: boolean }>,
+) {
+  return orderedBubbles(doc).filter((b) => {
+    if (editBubbles[String(b.id)]?.done) return false
+    const layout = layoutForBubble(b.id, layoutsByBubble, doc.layers)
+    return bubbleFlags(b, layout).length > 0
+  })
 }
 
 /** Single source of truth for workspace shortcuts (handlers + help panel). */
@@ -39,6 +54,9 @@ export const WORKSPACE_SHORTCUTS: ReadonlyArray<{
   { group: 'Balon', keys: 'Delete / ⌫', label: 'Balonu sil' },
   { group: 'Balon', keys: 'C', label: 'Clean katmanı aç/kapa' },
   { group: 'Balon', keys: 'T', label: 'Metin katmanı aç/kapa' },
+  { group: 'İnceleme', keys: '⇧N', label: 'Sonraki inceleme' },
+  { group: 'İnceleme', keys: '⇧P', label: 'Önceki inceleme' },
+  { group: 'İnceleme', keys: 'F', label: 'İnceleme filtresi' },
   { group: 'Kutu', keys: '←↑↓→', label: 'Kutuyu 1 px kaydır' },
   { group: 'Kutu', keys: '⇧ + ok', label: 'Kutuyu 10 px kaydır' },
   { group: 'Araçlar', keys: 'V', label: 'Seç' },
@@ -71,6 +89,8 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
   const setActiveTool = useSession((s) => s.setActiveTool)
   const brush = useSession((s) => s.brush)
   const activeTool = useSession((s) => s.ui.activeTool)
+  const bubbleFilter = useSession((s) => s.ui.bubbleFilter)
+  const patchUi = useSession((s) => s.patchUi)
   const undo = useSession((s) => s.undo)
   const redo = useSession((s) => s.redo)
   const pageSession = useSession((s) =>
@@ -189,6 +209,41 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
       const bubbles = orderedBubbles(doc)
       const selected = pageSession?.selectedBubbleId ?? null
       const idx = bubbles.findIndex((b) => b.id === selected)
+      const layoutsByBubble = pageSession?.layoutsByBubble ?? {}
+      const editBubbles = pageSession?.edit.bubbles ?? {}
+
+      // Soft-flag review queue — Shift+N / Shift+P (before plain n/p)
+      if (e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+        e.preventDefault()
+        const flagged = openFlaggedBubbles(doc, layoutsByBubble, editBubbles)
+        if (!flagged.length) {
+          toast('Bu sayfada inceleme kalmadı', 'info')
+          return
+        }
+        const cur = flagged.findIndex((b) => b.id === selected)
+        const next = flagged[Math.min(flagged.length - 1, Math.max(0, cur) + 1)]
+        if (next) selectBubble(next.id)
+        return
+      }
+      if (e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+        e.preventDefault()
+        const flagged = openFlaggedBubbles(doc, layoutsByBubble, editBubbles)
+        if (!flagged.length) {
+          toast('Bu sayfada inceleme kalmadı', 'info')
+          return
+        }
+        const cur = flagged.findIndex((b) => b.id === selected)
+        const next = flagged[Math.max(0, (cur < 0 ? 0 : cur) - 1)]
+        if (next) selectBubble(next.id)
+        return
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault()
+        patchUi({
+          bubbleFilter: bubbleFilter === 'flag' ? 'all' : 'flag',
+        })
+        return
+      }
 
       // Frame nudge — arrow keys when a bubble is selected. Only moves the
       // box; text does not reflow until "Oto dizgi" (plan §Faz 1 #4).
@@ -284,9 +339,11 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     selectedPageId,
     pageSession?.selectedBubbleId,
     pageSession?.edit,
+    pageSession?.layoutsByBubble,
     brush.mode,
     brush.radiusPx,
     activeTool,
+    bubbleFilter,
     shortcutsOpen,
     selectPage,
     selectBubble,
@@ -298,6 +355,7 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
     setBrushMode,
     setBrushRadius,
     setActiveTool,
+    patchUi,
     undo,
     redo,
   ])

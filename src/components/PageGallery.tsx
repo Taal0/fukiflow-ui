@@ -214,6 +214,14 @@ export function PageGallery({
                     <span className="min-w-0 flex-1 truncate text-[length:var(--text-ui)] text-[var(--color-ink)]">
                       {label}
                     </span>
+                    {(page.flag_count ?? 0) > 0 && (
+                      <span
+                        className="shrink-0 rounded px-1 py-0.5 text-[length:var(--text-meta)] font-semibold tabular-nums text-[#c2410c]"
+                        title={`${page.flag_count} balon inceleme istiyor`}
+                      >
+                        {page.flag_count}
+                      </span>
+                    )}
                     {page.bubble_count > 0 && (
                       <span
                         className="h-1 w-8 shrink-0 overflow-hidden rounded-full bg-[var(--color-surface-muted)]"
@@ -292,6 +300,14 @@ export function PageGallery({
                     <span className="absolute left-1 top-1 rounded bg-black/55 px-1.5 py-0.5 text-[length:var(--text-meta)] font-medium text-white">
                       {page.page_no}
                     </span>
+                    {(page.flag_count ?? 0) > 0 && (
+                      <span
+                        className="absolute bottom-1 left-1 rounded bg-[#c2410c] px-1.5 py-0.5 text-[length:var(--text-meta)] font-semibold tabular-nums text-white"
+                        title={`${page.flag_count} balon inceleme istiyor`}
+                      >
+                        {page.flag_count}
+                      </span>
+                    )}
                     {canDeletePages && onDeletePage && (
                       <div className="absolute right-1 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                         <DropdownMenu>

@@ -42,6 +42,7 @@ import { drawPaintStrokes } from '@/lib/paintStroke'
 import { orderedItems } from '@/lib/workingDoc'
 import {
   composePage,
+  drawFlagMarks,
   drawOrderBadges,
   drawRegions,
   fitTransform,
@@ -53,6 +54,8 @@ import {
   type ViewTransform,
 } from './compositor'
 import { usePageFonts } from './useFontFace'
+import { bubbleFlags } from '@/components/flags'
+import { layoutForBubble } from '@/components/bubbles/bubbleUtils'
 
 export type CanvasMode = 'letterer' | 'translator'
 
@@ -153,6 +156,7 @@ export function PageCanvas({
   const zoomCmd = useSession((s) => s.ui.zoomCmd)
   const setZoomPercent = useSession((s) => s.setZoomPercent)
   const activeTool = useSession((s) => s.ui.activeTool)
+  const bubbleFilter = useSession((s) => s.ui.bubbleFilter)
   const pageSession = useSession((s) => s.pages[pageId])
   const [toolHint, setToolHint] = useState<string | null>(null)
 
@@ -469,7 +473,8 @@ export function PageCanvas({
       ctx.restore()
     }
 
-    // Visible overlay pass: regions + order badges (never baked into compose).
+    // Visible overlay pass: regions + order badges + soft-flag marks
+    // (never baked into compose).
     const hasVerifying = regions.some((r) => r.status === 'verifying')
     const overlayRegions: {
       id: string
@@ -492,7 +497,16 @@ export function PageCanvas({
         kind: regionKind ?? 'bubble',
       })
     }
-    if (overlayRegions.length || mode === 'translator') {
+    const showFlagMarks =
+      mode === 'letterer' && bubbleFilter === 'flag'
+    const flaggedBubbles = showFlagMarks
+      ? detail.doc.bubbles.filter((b) => {
+          if (edit?.bubbles[String(b.id)]?.done) return false
+          const layout = layoutForBubble(b.id, layoutsByBubble, detail.doc.layers)
+          return bubbleFlags(b, layout).length > 0
+        })
+      : []
+    if (overlayRegions.length || mode === 'translator' || flaggedBubbles.length) {
       ctx.save()
       ctx.translate(t.offsetX, t.offsetY)
       ctx.scale(t.scale, t.scale)
@@ -507,6 +521,9 @@ export function PageCanvas({
             pulsePhase: hasVerifying ? performance.now() / 200 : 0,
           },
         )
+      }
+      if (flaggedBubbles.length) {
+        drawFlagMarks(ctx, flaggedBubbles, t.scale || 1)
       }
       if (mode === 'translator') {
         const items = orderedItems(detail.doc, edit)
@@ -583,6 +600,7 @@ export function PageCanvas({
     regionKind,
     mode,
     edit,
+    bubbleFilter,
   ])
 
   // Pulse animation while any region is verifying.

@@ -142,6 +142,8 @@ export interface PageSummary {
   translated_count?: number
   processing_status?: string
   error_message?: string | null
+  /** Soft-flag bubble count (editor_bubble_count) — total, not remaining. */
+  flag_count?: number
 }
 
 /** Per-bubble overlay fields persisted in PageEdit. */

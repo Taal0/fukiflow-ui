@@ -292,12 +292,20 @@ const UI_KEY = 'fukiflow.ui'
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type WorkspaceRole = 'letterer' | 'translator'
 export type ActiveTool = 'select' | 'frame' | 'paint' | 'restore' | 'region'
-export type BubbleFilter = 'all' | 'undone' | 'overflow' | 'editor'
+export type BubbleFilter = 'all' | 'undone' | 'overflow' | 'flag'
 export type ThumbSize = 'sm' | 'lg'
 export type ZoomCommand =
   | { seq: number; kind: 'fit' }
   | { seq: number; kind: '100' }
   | { seq: number; kind: 'set'; scale: number }
+
+function normalizeBubbleFilter(
+  value: string | undefined | null,
+): BubbleFilter {
+  if (value === 'editor' || value === 'flag') return 'flag'
+  if (value === 'undone' || value === 'overflow' || value === 'all') return value
+  return 'all'
+}
 
 export interface UiPrefs {
   theme: ThemePreference
@@ -366,7 +374,7 @@ function readUiPrefs(): UiPrefs {
         PANEL_WIDTH.default,
       ),
       panelListRatio: clampNum(parsed.panelListRatio, 0.25, 0.75, 0.55),
-      bubbleFilter: parsed.bubbleFilter ?? UI_DEFAULTS.bubbleFilter,
+      bubbleFilter: normalizeBubbleFilter(parsed.bubbleFilter),
       thumbSize: parsed.thumbSize ?? UI_DEFAULTS.thumbSize,
       // Ephemeral — never hydrate from storage
       bubbleSearch: '',

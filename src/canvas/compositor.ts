@@ -206,6 +206,64 @@ export function drawRegions(
   }
 }
 
+/** Amber dotted outline + ! badge for open soft-flag bubbles (review filter). */
+export function drawFlagMarks(
+  ctx: CanvasRenderingContext2D,
+  bubbles: {
+    id: number
+    polygon: Point[]
+    bbox: BBox
+  }[],
+  scale: number,
+): void {
+  if (!bubbles.length) return
+  const s = Math.max(scale, 0.001)
+  const stroke = Math.max(1, 1.5 / s)
+  const color = '#c2410c'
+  const fontSans =
+    typeof getComputedStyle !== 'undefined'
+      ? getComputedStyle(document.documentElement)
+          .getPropertyValue('--font-sans')
+          .trim() || 'ui-sans-serif, system-ui, sans-serif'
+      : 'ui-sans-serif, system-ui, sans-serif'
+  const badgePx = Math.max(10, 12 / s)
+  const badgeR = Math.max(6, 8 / s)
+
+  for (const bubble of bubbles) {
+    const poly = bubble.polygon
+    if (!poly?.length) continue
+
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = stroke
+    ctx.setLineDash([2 / s, 3 / s])
+    ctx.beginPath()
+    const [px0, py0] = poly[0]!
+    ctx.moveTo(px0, py0)
+    for (let i = 1; i < poly.length; i++) {
+      const [x, y] = poly[i]!
+      ctx.lineTo(x, y)
+    }
+    ctx.closePath()
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    const [bx, by] = bubble.bbox
+    const cx = bx + badgeR
+    const cy = Math.max(badgeR, by - badgeR * 0.2)
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(cx, cy, badgeR, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#fff'
+    ctx.font = `700 ${badgePx}px ${fontSans}`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('!', cx, cy + 0.5 / s)
+    ctx.restore()
+  }
+}
+
 function cssLengthToPx(value: string, fallback: number): number {
   const v = value.trim()
   if (!v) return fallback

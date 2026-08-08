@@ -54,7 +54,7 @@ export function BubbleRow({
         </span>
         <span className="flex shrink-0 items-center gap-1">
           {badges.slice(0, 1).map((b) => (
-            <Badge key={b} variant="warn">
+            <Badge key={b} variant={done ? 'default' : 'warn'}>
               {b}
             </Badge>
           ))}
