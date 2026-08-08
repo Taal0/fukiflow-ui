@@ -156,6 +156,8 @@ interface SessionState {
     layouts: BubbleLayout[],
     textLayers: Layer[],
   ) => void
+  /** Drop session typeset result for one bubble (editor trial undo). */
+  clearBubbleTypeset: (pageId: number, bubbleId: number) => void
   setViewMode: (mode: ViewMode) => void
   setSplitRatio: (ratio: number) => void
 
@@ -257,6 +259,7 @@ function pruneBubble(be: BubbleEdit): BubbleEdit | null {
   const next: BubbleEdit = { ...be }
   if (next.layers_off && next.layers_off.length === 0) delete next.layers_off
   if (next.done === false) delete next.done
+  if (next.typeset_try === false) delete next.typeset_try
   if (Object.keys(next).length === 0) return null
   return next
 }
@@ -329,7 +332,7 @@ export const UI_DEFAULTS: UiPrefs = {
   workspaceRole: 'letterer',
   galleryWidth: 208,
   panelWidth: 352,
-  panelListRatio: 0.55,
+  panelListRatio: 0.32,
   bubbleFilter: 'all',
   bubbleSearch: '',
   activeTool: 'select',
@@ -373,7 +376,7 @@ function readUiPrefs(): UiPrefs {
         PANEL_WIDTH.max,
         PANEL_WIDTH.default,
       ),
-      panelListRatio: clampNum(parsed.panelListRatio, 0.25, 0.75, 0.55),
+      panelListRatio: clampNum(parsed.panelListRatio, 0.2, 0.55, 0.32),
       bubbleFilter: normalizeBubbleFilter(parsed.bubbleFilter),
       thumbSize: parsed.thumbSize ?? UI_DEFAULTS.thumbSize,
       // Ephemeral — never hydrate from storage
@@ -1203,6 +1206,39 @@ export const useSession = create<SessionState>((set, get) => ({
           [pageId]: {
             ...cur,
             layoutsByBubble: map,
+            textLayers,
+          },
+        },
+      }
+    })
+  },
+
+  clearBubbleTypeset: (pageId, bubbleId) => {
+    set((s) => {
+      const pages = applyEditMutation(s.pages, pageId, (edit) =>
+        withBubblePatch(edit, bubbleId, {
+          typeset_try: null,
+          font_px: null,
+          frame: null,
+          leading: null,
+          align: null,
+        }),
+      )
+      const cur = ensurePage(pages, pageId)
+      const layoutsByBubble = { ...cur.layoutsByBubble }
+      delete layoutsByBubble[bubbleId]
+      const textId = `txt_${bubbleId}`
+      const textLayers = cur.textLayers
+        ? cur.textLayers.filter(
+            (l) => l.id !== textId && l.bubble_id !== bubbleId,
+          )
+        : null
+      return {
+        pages: {
+          ...pages,
+          [pageId]: {
+            ...cur,
+            layoutsByBubble,
             textLayers,
           },
         },

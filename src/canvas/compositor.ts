@@ -517,6 +517,14 @@ export function composePage(
   const assetById = new Map(input.layerAssets.map((a) => [a.layer_id, a]))
   const bubbleById = new Map(input.doc.bubbles.map((b) => [b.id, b]))
   const insetOverrides = input.insetOverrideBubbleIds ?? new Set<number>()
+  // Paint rides on the clean stack — hide with that bubble's clean layer.
+  const cleanOffBubbles = new Set<number>()
+  for (const layer of layers) {
+    if (layer.kind !== 'clean' || layer.bubble_id == null) continue
+    if (layer.enabled === false || input.disabledLayerIds.has(layer.id)) {
+      cleanOffBubbles.add(layer.bubble_id)
+    }
+  }
 
   for (const layer of layers) {
     if (layer.enabled === false) continue
@@ -534,6 +542,12 @@ export function composePage(
         ctx.drawImage(bmp, asset.offset_x, asset.offset_y)
       }
     } else if (layer.kind === 'paint') {
+      if (
+        layer.bubble_id != null &&
+        cleanOffBubbles.has(layer.bubble_id)
+      ) {
+        continue
+      }
       drawPaintStrokes(ctx, layer.strokes ?? [], input.source)
     } else if (layer.kind === 'text') {
       drawTextLayer(ctx, layer, input)
@@ -541,7 +555,10 @@ export function composePage(
   }
 
   if (input.liveStroke) {
-    drawPaintStrokes(ctx, [input.liveStroke], input.source)
+    const liveBid = input.liveStroke.bubble_id
+    if (liveBid == null || !cleanOffBubbles.has(liveBid)) {
+      drawPaintStrokes(ctx, [input.liveStroke], input.source)
+    }
   }
 
   if (input.selectedBubbleId != null) {

@@ -14,6 +14,7 @@ import type {
   PaintStroke,
   Point,
 } from '@/api/types'
+import { cleanLayerId } from '@/api/types'
 import {
   clampFrame,
   cursorForFrameHandle,
@@ -157,6 +158,8 @@ export function PageCanvas({
   const setZoomPercent = useSession((s) => s.setZoomPercent)
   const activeTool = useSession((s) => s.ui.activeTool)
   const bubbleFilter = useSession((s) => s.ui.bubbleFilter)
+  // Parent always passes a detail whose seed matches this pageId (held page
+  // during transitions — never another page's overlay).
   const pageSession = useSession((s) => s.pages[pageId])
   const [toolHint, setToolHint] = useState<string | null>(null)
 
@@ -195,6 +198,15 @@ export function PageCanvas({
     selectedBubbleId != null
       ? detail.doc.bubbles.find((b) => b.id === selectedBubbleId)
       : undefined
+  const selectedBubbleEdit =
+    selectedBubbleId != null
+      ? edit?.bubbles[String(selectedBubbleId)]
+      : undefined
+  // Textured-fill bubbles only get a draggable frame after Dizgi dene.
+  const frameInteractive =
+    selectedBubble != null &&
+    (selectedBubble.clean_status !== 'editor' ||
+      Boolean(selectedBubbleEdit?.typeset_try))
 
   const selectedRegion =
     selectedRegionId != null
@@ -388,14 +400,13 @@ export function PageCanvas({
       bubbleFontOverrides,
       fonts,
       selectedBubbleId,
-      // No movable box for `editor`-status bubbles — vision never typesets
-      // them automatically, so a draggable frame would be interactive-looking
-      // but functionally dead. Fall back to the plain polygon outline.
-      // Also hide frame handles while brushing.
+      // No movable box for `editor`-status bubbles until Dizgi dene —
+      // vision skips them unless force is set. Fall back to the plain
+      // polygon outline. Also hide frame handles while brushing.
       selectedFrame:
         !brushActive &&
         selectedBubbleId != null &&
-        selectedBubble?.clean_status !== 'editor'
+        frameInteractive
           ? (liveFrameRef.current ?? storedFrame)
           : null,
       handleRadius,
@@ -412,7 +423,11 @@ export function PageCanvas({
 
     octx.clearRect(0, 0, pw, ph)
     octx.drawImage(base, 0, 0)
-    if (liveStroke) {
+    if (
+      liveStroke &&
+      (liveStroke.bubble_id == null ||
+        !disabledLayerIds.has(cleanLayerId(liveStroke.bubble_id)))
+    ) {
       drawPaintStrokes(octx, [liveStroke], source)
     }
 
@@ -742,7 +757,7 @@ export function PageCanvas({
 
   const frameHitAt = (pageX: number, pageY: number): FrameHandle | null => {
     if (!selectedBubble || !storedFrame) return null
-    if (selectedBubble.clean_status === 'editor') return null
+    if (!frameInteractive) return null
     const scale = transformRef.current.scale || 1
     // Match drawn handle half-size (constant screen px → page px)
     const half = HANDLE_SCREEN_PX / scale
@@ -904,7 +919,7 @@ export function PageCanvas({
       mode === 'letterer' &&
       selectedBubble &&
       storedFrame &&
-      selectedBubble.clean_status !== 'editor'
+      frameInteractive
     ) {
       const page = screenToPage(x, y, transformRef.current)
       const handle = frameHitAt(page.x, page.y)
@@ -968,7 +983,7 @@ export function PageCanvas({
         mode === 'letterer' &&
         selectedBubble &&
         storedFrame &&
-        selectedBubble.clean_status !== 'editor'
+        frameInteractive
       ) {
         const page = screenToPage(x, y, transformRef.current)
         setCursor(cursorForFrameHandle(frameHitAt(page.x, page.y)))

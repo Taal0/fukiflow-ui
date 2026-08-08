@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { BubbleLayout } from '@/api/types'
+import { cn } from '@/lib/utils'
 
 /** The text as it is *currently* broken into lines on the page. */
 function layoutFormattedText(layout: BubbleLayout | undefined): string | null {
@@ -15,6 +16,8 @@ export function BubbleTextArea({
   onChange,
   autoFocus = false,
   placeholder = 'Balon metni…',
+  rows = 3,
+  className,
 }: {
   text: string
   layout: BubbleLayout | undefined
@@ -22,6 +25,8 @@ export function BubbleTextArea({
   onChange: (text: string) => void
   autoFocus?: boolean
   placeholder?: string
+  rows?: number
+  className?: string
 }) {
   const external = layoutFormattedText(layout) ?? text
   const [local, setLocal] = useState(external)
@@ -49,7 +54,7 @@ export function BubbleTextArea({
     <textarea
       ref={ref}
       value={local}
-      rows={3}
+      rows={rows}
       spellCheck={false}
       autoFocus={autoFocus}
       onFocus={() => {
@@ -61,7 +66,10 @@ export function BubbleTextArea({
         setLocal(e.target.value)
         onChange(e.target.value)
       }}
-      className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 py-1.5 text-[length:var(--text-ui)] leading-snug text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+      className={cn(
+        'w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 py-1.5 text-[length:var(--text-ui)] leading-snug text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
+        className,
+      )}
       placeholder={placeholder}
     />
   )

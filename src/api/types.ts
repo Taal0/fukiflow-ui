@@ -160,6 +160,12 @@ export interface BubbleEdit {
   done?: boolean
   /** Clean fill MaskSpec.inset override (px). */
   inset?: number
+  /**
+   * Opt into typeset for clean_status=editor (letterer trial).
+   * Requires app ``validate_edit`` / merge that persists ``typeset_try``;
+   * vision typeset honors override ``force: true``.
+   */
+  typeset_try?: boolean
 }
 
 export interface PaintStroke {

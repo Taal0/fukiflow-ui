@@ -87,6 +87,7 @@ export function WorkspaceView() {
   const setBubbleDone = useSession((s) => s.setBubbleDone)
   const setInset = useSession((s) => s.setInset)
   const deleteBubble = useSession((s) => s.deleteBubble)
+  const clearBubbleTypeset = useSession((s) => s.clearBubbleTypeset)
   const clearPaintForBubble = useSession((s) => s.clearPaintForBubble)
   const resetPageLocal = useSession((s) => s.resetPageLocal)
   const undo = useSession((s) => s.undo)
@@ -276,26 +277,40 @@ export function WorkspaceView() {
 
     for (const id of bubbleIds) {
       const bubble = workingDetail.doc.bubbles.find((b) => b.id === id)
-      if (!bubble || bubble.clean_status === 'editor') continue
+      if (!bubble) continue
       const be = session?.edit.bubbles[String(id)]
+      // Page-wide Oto dizgi skips textured fills unless already opted in.
+      // Per-bubble Dizgi dene sets typeset_try below before this runs.
+      if (bubble.clean_status === 'editor' && !be?.typeset_try) {
+        // Explicit single-bubble call from inspector → opt in.
+        if (bubbleIds.length === 1) {
+          useSession.getState().patchBubble(activePageId, id, {
+            typeset_try: true,
+          })
+        } else {
+          continue
+        }
+      }
+      const beAfter =
+        useSession.getState().pages[activePageId]?.edit.bubbles[String(id)] ?? be
       const layout =
         session?.layoutsByBubble[id] ??
         workingDetail.doc.layers.find((l) => l.id === textLayerId(id))?.layout
       const text =
-        be?.text !== undefined
-          ? be.text
+        beAfter?.text !== undefined
+          ? beAfter.text
           : (workingDetail.doc.texts.find((t) => t.bubble_id === id)?.text ?? '')
       if (!String(text).trim()) continue
 
-      const fontPx = resolveFontPx(be, layout)
-      const frame = frames?.[id] ?? resolveBubbleFrame(bubble, be)
+      const fontPx = resolveFontPx(beAfter, layout)
+      const frame = frames?.[id] ?? resolveBubbleFrame(bubble, beAfter)
 
       const patch: {
         font_px?: number
         frame?: [number, number, number, number]
       } = {}
-      if (be?.font_px == null) patch.font_px = fontPx
-      if (!be?.frame && !frames?.[id]) patch.frame = frame
+      if (beAfter?.font_px == null) patch.font_px = fontPx
+      if (!beAfter?.frame && !frames?.[id]) patch.frame = frame
       if (Object.keys(patch).length) {
         useSession.getState().patchBubble(activePageId, id, patch, {
           undo: false,
@@ -449,6 +464,10 @@ export function WorkspaceView() {
           autoTypesetBubbles([bubbleId])
         }}
         onAutoTypeset={(bubbleId) => autoTypesetBubbles([bubbleId])}
+        onClearTypeset={(bubbleId) => {
+          if (activePageId == null) return
+          clearBubbleTypeset(activePageId, bubbleId)
+        }}
         onToggleDone={(bubbleId, done) => {
           if (activePageId == null) return
           setBubbleDone(activePageId, bubbleId, done)

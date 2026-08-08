@@ -258,8 +258,13 @@ export function useWorkspaceKeys({ pages, doc, pageId }: Args) {
       ) {
         e.preventDefault()
         const bubble = doc.bubbles.find((b) => b.id === selected)
-        if (!bubble || bubble.clean_status === 'editor') return
         const be = pageSession?.edit.bubbles[String(selected)]
+        if (
+          !bubble ||
+          (bubble.clean_status === 'editor' && !be?.typeset_try)
+        ) {
+          return
+        }
         const cur = resolveBubbleFrame(bubble, be)
         const step = e.shiftKey ? 10 : 1
         let dx = 0

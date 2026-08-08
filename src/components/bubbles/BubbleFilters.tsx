@@ -1,5 +1,5 @@
 import type { BubbleFilter } from '@/store/session'
-import { cn } from '@/lib/utils'
+import { Segmented } from '@/components/ui/segmented'
 
 const FILTERS: { id: BubbleFilter; label: string }[] = [
   { id: 'all', label: 'Tümü' },
@@ -30,35 +30,31 @@ export function BubbleFilters({
         value={search}
         onChange={(e) => onSearchChange(e.target.value)}
         placeholder="Balon ara…"
-        className="h-7 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-[length:var(--text-ui)] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+        className="h-7 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 text-[length:var(--text-ui)] text-[var(--color-ink)] outline-none transition-[box-shadow,border-color] duration-150 placeholder:text-[var(--color-ink-muted)] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
       />
-      <div className="flex flex-wrap gap-1" role="group" aria-label="Filtreler">
-        {FILTERS.map((f) => {
+      <Segmented
+        ariaLabel="Filtreler"
+        value={filter}
+        onChange={onFilterChange}
+        fill
+        options={FILTERS.map((f) => {
           const isFlag = f.id === 'flag'
           const dimmed = isFlag && flagOpenCount === 0 && filter !== 'flag'
           const label =
             isFlag && flagOpenCount > 0
               ? `${f.label} ${flagOpenCount}`
               : f.label
-          return (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => onFilterChange(f.id)}
-              className={cn(
-                'rounded px-2 py-0.5 text-[length:var(--text-meta)] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
-                filter === f.id
-                  ? 'bg-[var(--color-accent)] text-white'
-                  : dimmed
-                    ? 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]/50 hover:text-[var(--color-ink-muted)]'
-                    : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
-              )}
-            >
-              {label}
-            </button>
-          )
+          return {
+            value: f.id,
+            label: dimmed ? (
+              <span className="opacity-50">{label}</span>
+            ) : (
+              label
+            ),
+            title: dimmed ? 'İnceleme bayrağı yok' : undefined,
+          }
         })}
-      </div>
+      />
     </div>
   )
 }

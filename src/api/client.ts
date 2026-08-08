@@ -117,6 +117,8 @@ export interface TypesetBody {
       frame?: [number, number, number, number] | number[]
       leading?: number
       align?: string
+      /** Opt into typeset for clean_status=editor bubbles. */
+      force?: boolean
     }
   > | null
 }

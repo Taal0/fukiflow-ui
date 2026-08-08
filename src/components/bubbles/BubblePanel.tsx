@@ -50,6 +50,7 @@ interface BubblePanelProps {
   onAlign: (bubbleId: number, align: 'left' | 'center' | null) => void
   onResetFrame: (bubbleId: number) => void
   onAutoTypeset: (bubbleId: number) => void
+  onClearTypeset?: (bubbleId: number) => void
   onToggleDone: (bubbleId: number, done: boolean) => void
   onInset: (bubbleId: number, inset: number | null) => void
   onDeleteBubble?: (bubbleId: number) => void
@@ -97,6 +98,7 @@ export function BubblePanel({
   onAlign,
   onResetFrame,
   onAutoTypeset,
+  onClearTypeset,
   onToggleDone,
   onInset,
   onDeleteBubble,
@@ -206,8 +208,12 @@ export function BubblePanel({
     node?.scrollIntoView({ block: 'nearest' })
   }, [selectedBubbleId])
 
-  // Vertical sash between list and inspector — reuse horizontal math via height %.
+  // List stays on top; when a bubble is selected it shrinks so the inspector can grow.
+  const hasSelection = selected != null
   const listPct = Math.round(listRatio * 100)
+  const LIST_RATIO_MIN = 0.2
+  const LIST_RATIO_MAX = 0.55
+  const LIST_RATIO_DEFAULT = 0.32
 
   const onListRatioDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     const parent = e.currentTarget.parentElement
@@ -215,7 +221,10 @@ export function BubblePanel({
     const rect = parent.getBoundingClientRect()
     const onMove = (ev: PointerEvent) => {
       const y = ev.clientY - rect.top
-      const ratio = Math.min(0.75, Math.max(0.25, y / rect.height))
+      const ratio = Math.min(
+        LIST_RATIO_MAX,
+        Math.max(LIST_RATIO_MIN, y / rect.height),
+      )
       patchUi({ panelListRatio: ratio })
     }
     const onUp = () => {
@@ -277,8 +286,11 @@ export function BubblePanel({
       <div className="flex min-h-0 flex-1 flex-col">
         <div
           ref={listRef}
-          style={{ flexBasis: `${listPct}%` }}
-          className="min-h-0 flex-shrink overflow-y-auto p-1.5"
+          style={hasSelection ? { flexBasis: `${listPct}%` } : undefined}
+          className={cn(
+            'min-h-0 overflow-y-auto p-1.5 motion-safe:transition-[flex-basis] motion-safe:duration-200 motion-safe:ease-[cubic-bezier(0.22,1,0.36,1)]',
+            hasSelection ? 'shrink-0 grow-0' : 'flex-1',
+          )}
         >
           {flagEmpty ? (
             <EmptyState
@@ -373,57 +385,69 @@ export function BubblePanel({
           )}
         </div>
 
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          aria-valuenow={listPct}
-          tabIndex={0}
-          onPointerDown={onListRatioDrag}
-          onDoubleClick={() => patchUi({ panelListRatio: 0.55 })}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowUp') {
-              e.preventDefault()
-              patchUi({
-                panelListRatio: Math.max(0.25, listRatio - 0.05),
-              })
-            } else if (e.key === 'ArrowDown') {
-              e.preventDefault()
-              patchUi({
-                panelListRatio: Math.min(0.75, listRatio + 0.05),
-              })
-            }
-          }}
-          className={cn(
-            'h-1.5 shrink-0 cursor-row-resize bg-[var(--color-border)]/60 hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
-          )}
-        />
+        {hasSelection && selected && (
+          <>
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Liste ve düzenleyici oranı"
+              aria-valuenow={listPct}
+              aria-valuemin={Math.round(LIST_RATIO_MIN * 100)}
+              aria-valuemax={Math.round(LIST_RATIO_MAX * 100)}
+              tabIndex={0}
+              onPointerDown={onListRatioDrag}
+              onDoubleClick={() =>
+                patchUi({ panelListRatio: LIST_RATIO_DEFAULT })
+              }
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  patchUi({
+                    panelListRatio: Math.max(
+                      LIST_RATIO_MIN,
+                      listRatio - 0.05,
+                    ),
+                  })
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  patchUi({
+                    panelListRatio: Math.min(
+                      LIST_RATIO_MAX,
+                      listRatio + 0.05,
+                    ),
+                  })
+                }
+              }}
+              className="h-1.5 shrink-0 cursor-row-resize bg-[var(--color-border)]/60 transition-colors duration-150 hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+            />
 
-        <div className="min-h-0 flex-1 overflow-hidden bg-[var(--color-surface-raised)]">
-          <BubbleInspector
-            doc={doc}
-            bubble={selected}
-            layout={selectedLayout}
-            be={selected ? bubbleEdits[String(selected.id)] : undefined}
-            fonts={fonts}
-            bubbleFont={
-              selected ? (bubbleFontOverrides[selected.id] ?? null) : null
-            }
-            disabledLayerIds={disabledLayerIds}
-            typesetPending={typesetPending}
-            onSelect={onSelect}
-            onToggleLayer={onToggleLayer}
-            onTextChange={onTextChange}
-            onResetText={onResetText}
-            onBubbleFont={onBubbleFont}
-            onFontPx={onFontPx}
-            onLeading={onLeading}
-            onAlign={onAlign}
-            onResetFrame={onResetFrame}
-            onAutoTypeset={onAutoTypeset}
-            onToggleDone={onToggleDone}
-            onInset={onInset}
-          />
-        </div>
+            <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-surface-raised)] motion-safe:animate-[ff-rise-in_var(--duration-normal)_var(--ease-out-soft)]">
+              <BubbleInspector
+                doc={doc}
+                bubble={selected}
+                layout={selectedLayout}
+                be={bubbleEdits[String(selected.id)]}
+                fonts={fonts}
+                bubbleFont={bubbleFontOverrides[selected.id] ?? null}
+                disabledLayerIds={disabledLayerIds}
+                typesetPending={typesetPending}
+                onSelect={onSelect}
+                onToggleLayer={onToggleLayer}
+                onTextChange={onTextChange}
+                onResetText={onResetText}
+                onBubbleFont={onBubbleFont}
+                onFontPx={onFontPx}
+                onLeading={onLeading}
+                onAlign={onAlign}
+                onResetFrame={onResetFrame}
+                onAutoTypeset={onAutoTypeset}
+                onClearTypeset={onClearTypeset}
+                onToggleDone={onToggleDone}
+                onInset={onInset}
+              />
+            </div>
+          </>
+        )}
       </div>
     </aside>
   )

@@ -287,7 +287,7 @@ export function applyEditLayers(
 
   if (paint.length) {
     layers = layers.filter((l) => l.kind !== 'paint')
-    layers = [...layers, ...paintLayersFromStrokes(paint, seed)]
+    layers = [...layers, ...paintLayersFromStrokes(paint, seed, layers)]
   }
 
   return { ...seed, layers }
@@ -301,9 +301,18 @@ function bubbleBBox(doc: PageDoc, bubbleId: number | undefined): BBox {
   return b?.bbox ?? [0, 0, doc.source.width, doc.source.height]
 }
 
+function cleanEnabledForBubble(layers: Layer[], bubbleId: number): boolean {
+  for (const layer of layers) {
+    if (layer.kind !== 'clean' || layer.bubble_id !== bubbleId) continue
+    return layer.enabled !== false
+  }
+  return true
+}
+
 function paintLayersFromStrokes(
   paint: PaintStroke[],
   doc: PageDoc,
+  layers: Layer[],
 ): Layer[] {
   const byBubble = new Map<number | 'page', PaintStroke[]>()
   for (const stroke of paint) {
@@ -326,7 +335,8 @@ function paintLayersFromStrokes(
       name: bid != null ? `Paint / bubble ${bid}` : 'Paint / page',
       group: bid != null ? `bubble_${bid}` : null,
       bubble_id: bid ?? null,
-      enabled: true,
+      // Paint rides on the clean stack (parity with server merge).
+      enabled: bid != null ? cleanEnabledForBubble(layers, bid) : true,
       opacity: 1,
       blend: 'normal',
       z: PAINT_Z_BASE + (bid ?? 0),
@@ -409,6 +419,13 @@ export function buildTypesetBody(
 
     if (be?.leading != null) entry.leading = be.leading
     if (be?.align) entry.align = be.align
+
+    // Vision skips clean_status=editor unless force is set (UI: Dizgi dene).
+    const forceIds = opts?.forceBubbleIds
+    const forceThis =
+      Boolean(be?.typeset_try) ||
+      (forceIds != null && forceIds.includes(id))
+    if (forceThis) entry.force = true
 
     overrides[String(id)] = entry
   }
