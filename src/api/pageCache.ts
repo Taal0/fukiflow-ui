@@ -13,6 +13,7 @@ const EMPTY_EDIT: PageEdit = {
   paint: [],
   regions: [],
   order: [],
+  removed_bubbles: [],
 }
 
 /** Patch only the PageEdit overlay — seed doc / assets stay warm. */
@@ -33,6 +34,45 @@ export function applyPageEditToCache(
       edit_rev: overlay.rev,
       edit_author:
         overlay.author !== undefined ? overlay.author : old.edit_author,
+    }
+  })
+}
+
+/** Inject YOLO-promoted bubbles + clean layer assets into the cached seed doc. */
+export function injectPromotedIntoCache(
+  qc: QueryClient,
+  pageId: number,
+  payload: {
+    bubbles: PageDetail['doc']['bubbles']
+    layer_assets?: PageDetail['layer_assets']
+    layers?: PageDetail['doc']['layers']
+  },
+): void {
+  if (!payload.bubbles.length && !payload.layer_assets?.length) return
+  qc.setQueryData(pageQueryKey(pageId), (old: PageDetail | undefined) => {
+    if (!old) return old
+    const existingIds = new Set(old.doc.bubbles.map((b) => b.id))
+    const newBubbles = payload.bubbles.filter((b) => !existingIds.has(b.id))
+    const existingLayerIds = new Set(old.doc.layers.map((l) => l.id))
+    const newLayers = (payload.layers ?? []).filter(
+      (l) => !existingLayerIds.has(l.id),
+    )
+    const existingAssetIds = new Set(old.layer_assets.map((a) => a.layer_id))
+    const newAssets = (payload.layer_assets ?? []).filter(
+      (a) => !existingAssetIds.has(a.layer_id),
+    )
+    return {
+      ...old,
+      doc: {
+        ...old.doc,
+        bubbles: [...old.doc.bubbles, ...newBubbles],
+        layers: [...old.doc.layers, ...newLayers],
+      },
+      layer_assets: [...old.layer_assets, ...newAssets],
+      page: {
+        ...old.page,
+        bubble_count: old.doc.bubbles.length + newBubbles.length,
+      },
     }
   })
 }

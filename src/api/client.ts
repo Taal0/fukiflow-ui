@@ -1,13 +1,16 @@
 import type {
+  Bubble,
   BubbleLayout,
   Chapter,
   ChapterProgress,
   FontInfo,
   Layer,
+  LayerAsset,
   PageDetail,
   PageDoc,
   PageEdit,
   PageSummary,
+  Region,
 } from './types'
 
 /** Optional absolute API origin for desktop / remote packaging.
@@ -257,6 +260,24 @@ export const api = {
       chapter_deleted: boolean
       slug: string
     }>(`/api/pages/${pageId}`, { method: 'DELETE' }),
+
+  verifyRegions: (
+    pageId: number,
+    init?: { signal?: AbortSignal },
+  ) =>
+    request<VerifyRegionsResult>(`/api/pages/${pageId}/verify-regions`, {
+      method: 'POST',
+      signal: init?.signal,
+    }),
+}
+
+export interface VerifyRegionsResult {
+  rev: number
+  regions: Region[]
+  promoted: Bubble[]
+  additional_bubbles: Bubble[]
+  layer_assets: LayerAsset[]
+  edit: PageEdit
 }
 
 export function triggerDownload(blob: Blob, filename: string): void {

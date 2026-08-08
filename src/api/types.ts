@@ -169,13 +169,20 @@ export interface PaintStroke {
   points: Point[]
 }
 
-/** Manual translator box — not a seed bubble; never enters typeset/compose. */
+/** Translator-drawn box purpose — only ``bubble`` goes through YOLO verify. */
+export type RegionKind = 'bubble' | 'sfx' | 'other'
+
+/** Manual translator box — not a seed bubble until YOLO-confirmed (bubble kind). */
 export interface Region {
   id: string
   bbox: BBox
   text: string
-  status: 'unclassified' | string
+  /** Defaults to ``bubble`` when missing (legacy edits). */
+  kind: RegionKind
+  status: 'unclassified' | 'verifying' | 'confirmed' | 'unconfirmed'
   confidence: number | null
+  /** Set when status is confirmed — promoted seed bubble id. */
+  bubble_id?: number
 }
 
 /** Letterer / translator overlay — seed PageDoc stays immutable. */
@@ -188,6 +195,8 @@ export interface PageEdit {
   regions?: Region[]
   /** Unified reading order tokens: `b:<id>` | `r-*`. */
   order?: string[]
+  /** Hard-deleted seed bubble ids — excluded from list/compose/progress. */
+  removed_bubbles?: number[]
 }
 
 export type BrushMode = 'off' | 'fill' | 'restore'
