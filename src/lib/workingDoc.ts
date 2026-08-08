@@ -35,6 +35,12 @@ export type WorkingSessionBits = {
   layoutsByBubble?: Record<number, BubbleLayout>
 }
 
+export function removedBubbleSet(
+  edit: PageEdit | null | undefined,
+): Set<number> {
+  return new Set(edit?.removed_bubbles ?? [])
+}
+
 /**
  * Unified reading-order items (parity with server ``ordered_items``).
  * Tokens in ``edit.order`` first; remaining seed bubbles by reading_order;
@@ -44,9 +50,14 @@ export function orderedItems(
   doc: PageDoc,
   edit: PageEdit | null | undefined,
 ): OrderedItem[] {
-  const regions = edit?.regions ?? []
+  const removed = removedBubbleSet(edit)
+  const regions = (edit?.regions ?? []).filter(
+    (r) => !(r.status === 'confirmed' && r.bubble_id != null),
+  )
   const regionIds = new Set(regions.map((r) => r.id))
-  const bubbleIds = new Set(doc.bubbles.map((b) => b.id))
+  const bubbleIds = new Set(
+    doc.bubbles.filter((b) => !removed.has(b.id)).map((b) => b.id),
+  )
 
   const items: OrderedItem[] = []
   const seenBubbles = new Set<number>()
@@ -69,7 +80,7 @@ export function orderedItems(
   }
 
   const remaining = doc.bubbles
-    .filter((b) => !seenBubbles.has(b.id))
+    .filter((b) => !removed.has(b.id) && !seenBubbles.has(b.id))
     .slice()
     .sort((a, b) => {
       const ra = a.reading_order
@@ -152,7 +163,19 @@ export function buildWorkingDoc(
   }
 
   doc = applyEditLayers(doc, session?.edit)
-  return applyReadingOrder(doc, session?.edit)
+  doc = applyReadingOrder(doc, session?.edit)
+
+  const removed = removedBubbleSet(session?.edit)
+  if (removed.size === 0) return doc
+
+  return {
+    ...doc,
+    bubbles: doc.bubbles.filter((b) => !removed.has(b.id)),
+    texts: doc.texts.filter((t) => !removed.has(t.bubble_id)),
+    layers: doc.layers.filter(
+      (l) => l.bubble_id == null || !removed.has(l.bubble_id),
+    ),
+  }
 }
 
 /** True when overlay fields require a typeset pass (not paint/inset alone). */
@@ -209,6 +232,7 @@ export async function buildComposePayloadForPage(
           paint: [],
           regions: [],
           order: [],
+          removed_bubbles: [],
         })
 
   let textLayers = session?.hydrated ? session.textLayers : null
@@ -329,23 +353,27 @@ export function buildTypesetBody(
   },
 ): TypesetBody {
   const edit = session?.edit
+  const removed = removedBubbleSet(edit)
   const textOverrides = textOverridesFromEdit(edit)
   const sizeOverrides = sizeOverridesFromEdit(edit)
   const bubbleFonts = bubbleFontsFromEdit(edit)
   const resolvedPageFont =
     pageFont !== undefined ? pageFont : pageFontFromEdit(edit)
 
-  const texts = detail.doc.texts.map((t) => ({
-    bubble_id: t.bubble_id,
-    text:
-      textOverrides[t.bubble_id] !== undefined
-        ? textOverrides[t.bubble_id]!
-        : (t.text ?? ''),
-  }))
+  const texts = detail.doc.texts
+    .filter((t) => !removed.has(t.bubble_id))
+    .map((t) => ({
+      bubble_id: t.bubble_id,
+      text:
+        textOverrides[t.bubble_id] !== undefined
+          ? textOverrides[t.bubble_id]!
+          : (t.text ?? ''),
+    }))
 
   // Include bubbles that have overrides but no seed text row.
   const seen = new Set(texts.map((t) => t.bubble_id))
   for (const bubble of detail.doc.bubbles) {
+    if (removed.has(bubble.id)) continue
     if (seen.has(bubble.id)) continue
     if (textOverrides[bubble.id] !== undefined) {
       texts.push({ bubble_id: bubble.id, text: textOverrides[bubble.id]! })
@@ -361,6 +389,7 @@ export function buildTypesetBody(
   // `bbox` for round/tailed bubbles — see `computeDefaultFrame` — so this
   // stays safe without needing to gate it behind a manual edit.
   for (const bubble of detail.doc.bubbles) {
+    if (removed.has(bubble.id)) continue
     const id = bubble.id
     const be = edit?.bubbles[String(id)]
     const forced = opts?.forceOverrides?.[id]
@@ -409,6 +438,7 @@ export function editPayload(edit: PageEdit): PageEdit {
     paint: edit.paint ?? [],
     regions: edit.regions ?? [],
     order: edit.order ?? [],
+    removed_bubbles: edit.removed_bubbles ?? [],
   }
 }
 

@@ -8,6 +8,7 @@ import type {
   PageEdit,
   PaintStroke,
   Region,
+  RegionKind,
   SaveStatus,
   ViewMode,
 } from '@/api/types'
@@ -81,6 +82,7 @@ interface SessionState {
   setBrushRadius: (radiusPx: number) => void
   setBrushColor: (color: [number, number, number] | null) => void
   setActiveTool: (tool: ActiveTool) => void
+  setRegionKind: (kind: RegionKind | null) => void
   patchUi: (patch: Partial<UiPrefs>) => void
   setTheme: (theme: ThemePreference) => void
   setWorkspaceRole: (role: WorkspaceRole) => void
@@ -125,10 +127,26 @@ interface SessionState {
   setBubbleDone: (pageId: number, bubbleId: number, done: boolean) => void
   toggleBubbleDone: (pageId: number, bubbleId: number) => void
 
-  addRegion: (pageId: number, bbox: BBox, text?: string) => string
+  addRegion: (
+    pageId: number,
+    bbox: BBox,
+    text?: string,
+    kind?: RegionKind,
+  ) => string
   updateRegionBbox: (pageId: number, regionId: string, bbox: BBox) => void
   setRegionText: (pageId: number, regionId: string, text: string) => void
+  updateRegionStatus: (
+    pageId: number,
+    regionId: string,
+    status: Region['status'],
+    confidence?: number | null,
+    bubbleId?: number,
+  ) => void
+  /** Apply server verify overlay (regions + promoted bubble texts) without undo. */
+  applyVerifyEdit: (pageId: number, edit: PageEdit) => void
   deleteRegion: (pageId: number, regionId: string) => void
+  /** Hard-delete a seed bubble from the working set (Cmd+Z to restore). */
+  deleteBubble: (pageId: number, bubbleId: number) => void
   moveOrder: (pageId: number, fromIndex: number, toIndex: number) => void
   reorder: (pageId: number, tokens: string[]) => void
 
@@ -164,7 +182,15 @@ interface SessionState {
 }
 
 export function emptyEdit(rev = 0): PageEdit {
-  return { rev, page: {}, bubbles: {}, paint: [], regions: [], order: [] }
+  return {
+    rev,
+    page: {},
+    bubbles: {},
+    paint: [],
+    regions: [],
+    order: [],
+    removed_bubbles: [],
+  }
 }
 
 function emptyPage(): PageSession {
@@ -204,6 +230,7 @@ function stableEditCore(edit: PageEdit): string {
     paint: edit.paint ?? [],
     regions: edit.regions ?? [],
     order: edit.order ?? [],
+    removed_bubbles: edit.removed_bubbles ?? [],
   }
   return JSON.stringify(core, (_key, v) => {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
@@ -281,6 +308,8 @@ export interface UiPrefs {
   bubbleFilter: BubbleFilter
   bubbleSearch: string
   activeTool: ActiveTool
+  /** Selected region draw kind — null until user picks bubble/sfx/other. */
+  regionKind: RegionKind | null
   zoomPercent: number
   galleryDrawerOpen: boolean
   thumbSize: ThumbSize
@@ -296,6 +325,7 @@ export const UI_DEFAULTS: UiPrefs = {
   bubbleFilter: 'all',
   bubbleSearch: '',
   activeTool: 'select',
+  regionKind: null,
   zoomPercent: 100,
   galleryDrawerOpen: false,
   thumbSize: 'sm',
@@ -341,6 +371,7 @@ function readUiPrefs(): UiPrefs {
       // Ephemeral — never hydrate from storage
       bubbleSearch: '',
       activeTool: 'select',
+      regionKind: null,
       zoomPercent: 100,
       galleryDrawerOpen: false,
       zoomCmd: null,
@@ -520,12 +551,29 @@ export const useSession = create<SessionState>((set, get) => ({
 
   setActiveTool: (tool) =>
     set((s) => {
-      const ui = { ...s.ui, activeTool: tool }
+      const ui = {
+        ...s.ui,
+        activeTool: tool,
+        // Clear draw kind when leaving the region tool.
+        regionKind: tool === 'region' ? s.ui.regionKind : null,
+      }
       return {
         ui,
         brush: { ...s.brush, mode: toolToBrush(tool) },
       }
     }),
+
+  setRegionKind: (kind) =>
+    set((s) => ({
+      ui: {
+        ...s.ui,
+        regionKind: kind,
+        ...(kind != null ? { activeTool: 'region' as const } : {}),
+      },
+      ...(kind != null
+        ? { brush: { ...s.brush, mode: 'off' as const } }
+        : {}),
+    })),
 
   patchUi: (patch) =>
     set((s) => {
@@ -588,6 +636,7 @@ export const useSession = create<SessionState>((set, get) => ({
       next.regions = next.regions ?? []
       next.order = next.order ?? []
       next.paint = next.paint ?? []
+      next.removed_bubbles = next.removed_bubbles ?? []
       return {
         pages: {
           ...s.pages,
@@ -843,13 +892,20 @@ export const useSession = create<SessionState>((set, get) => ({
     })
   },
 
-  addRegion: (pageId, bbox, text = '') => {
+  addRegion: (pageId, bbox, text = '', kind) => {
+    const resolved = kind ?? useSession.getState().ui.regionKind
+    if (resolved == null) {
+      throw new Error('region kind required before addRegion')
+    }
     const id = newRegionId()
+    const isBubble = resolved === 'bubble'
     const region: Region = {
       id,
       bbox,
       text,
-      status: 'unclassified',
+      kind: resolved,
+      // sfx/other skip YOLO — stay in the list as confirmed without bubble_id.
+      status: isBubble ? 'unclassified' : 'confirmed',
       confidence: null,
     }
     set((s) => {
@@ -869,6 +925,7 @@ export const useSession = create<SessionState>((set, get) => ({
             selectedBubbleId: null,
           },
         },
+        ui: { ...s.ui, activeTool: 'select', regionKind: null },
       }
     })
     return id
@@ -881,9 +938,29 @@ export const useSession = create<SessionState>((set, get) => ({
         pageId,
         (edit) => ({
           ...edit,
-          regions: (edit.regions ?? []).map((r) =>
-            r.id === regionId ? { ...r, bbox } : r,
-          ),
+          regions: (edit.regions ?? []).map((r) => {
+            if (r.id !== regionId) return r
+            const kind = r.kind ?? 'bubble'
+            // Only bubble-kind YOLO results are invalidated by geometry edits.
+            if (kind !== 'bubble') {
+              return { ...r, kind, bbox }
+            }
+            return {
+              ...r,
+              kind,
+              bbox,
+              status:
+                r.status === 'confirmed' || r.status === 'unconfirmed'
+                  ? 'unclassified'
+                  : r.status,
+              confidence:
+                r.status === 'confirmed' || r.status === 'unconfirmed'
+                  ? null
+                  : r.confidence,
+              bubble_id:
+                r.status === 'confirmed' ? undefined : r.bubble_id,
+            }
+          }),
         }),
         { coalesceKey: `region-bbox:${regionId}` },
       ),
@@ -897,13 +974,112 @@ export const useSession = create<SessionState>((set, get) => ({
         pageId,
         (edit) => ({
           ...edit,
-          regions: (edit.regions ?? []).map((r) =>
-            r.id === regionId ? { ...r, text } : r,
-          ),
+          regions: (edit.regions ?? []).map((r) => {
+            if (r.id !== regionId) return r
+            const kind = r.kind ?? 'bubble'
+            if (kind !== 'bubble') {
+              return { ...r, kind, text }
+            }
+            return {
+              ...r,
+              kind,
+              text,
+              status:
+                r.status === 'confirmed' || r.status === 'unconfirmed'
+                  ? 'unclassified'
+                  : r.status,
+              confidence:
+                r.status === 'confirmed' || r.status === 'unconfirmed'
+                  ? null
+                  : r.confidence,
+              bubble_id:
+                r.status === 'confirmed' ? undefined : r.bubble_id,
+            }
+          }),
         }),
         { coalesceKey: `region-text:${regionId}` },
       ),
     }))
+  },
+
+  updateRegionStatus: (pageId, regionId, status, confidence, bubbleId) => {
+    // Ephemeral UI state — don't dirty/autosave (avoids persisting "verifying"
+    // then having the server skip it as non-pending).
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      const regions = (cur.edit.regions ?? []).map((r) => {
+        if (r.id !== regionId) return r
+        const next: Region = { ...r, status }
+        if (confidence !== undefined) next.confidence = confidence
+        if (bubbleId !== undefined) next.bubble_id = bubbleId
+        return next
+      })
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: { ...cur.edit, regions },
+          },
+        },
+      }
+    })
+  },
+
+  applyVerifyEdit: (pageId, edit) => {
+    set((s) => {
+      const cur = ensurePage(s.pages, pageId)
+      const local = cur.edit
+      const serverRegions = new Map(
+        (edit.regions ?? []).map((r) => [r.id, r] as const),
+      )
+      const regions = (local.regions ?? []).map((r) => {
+        const sr = serverRegions.get(r.id)
+        if (!sr) return r
+        return {
+          ...r,
+          status: sr.status,
+          confidence: sr.confidence,
+          bubble_id: sr.bubble_id,
+        }
+      })
+      // Adopt server-only region rows (rare).
+      for (const sr of edit.regions ?? []) {
+        if (!regions.some((r) => r.id === sr.id)) regions.push(sr)
+      }
+
+      const bubbles = { ...local.bubbles }
+      for (const [key, be] of Object.entries(edit.bubbles ?? {})) {
+        if (!be || typeof be !== 'object') continue
+        // Only adopt bubble text written by verify (new promotes).
+        if (typeof be.text === 'string') {
+          bubbles[key] = { ...(bubbles[key] ?? {}), text: be.text }
+        }
+      }
+
+      return {
+        pages: {
+          ...s.pages,
+          [pageId]: {
+            ...cur,
+            edit: {
+              ...local,
+              rev: edit.rev,
+              regions,
+              bubbles,
+              order: edit.order ?? local.order,
+            },
+            // Verify result is persisted server-side; clear dirty only when
+            // local content matched what we sent (rev bump absorbed).
+            dirty: false,
+            saveStatus: 'saved' as const,
+            saveError: null,
+            conflictServer: null,
+            hydrated: true,
+          },
+        },
+      }
+    })
   },
 
   deleteRegion: (pageId, regionId) => {
@@ -921,6 +1097,46 @@ export const useSession = create<SessionState>((set, get) => ({
             ...cur,
             selectedRegionId:
               cur.selectedRegionId === regionId ? null : cur.selectedRegionId,
+          },
+        },
+      }
+    })
+  },
+
+  deleteBubble: (pageId, bubbleId) => {
+    set((s) => {
+      const pages = applyEditMutation(s.pages, pageId, (edit) => {
+        const removed = edit.removed_bubbles ?? []
+        if (removed.includes(bubbleId)) return edit
+        const bubbles = { ...edit.bubbles }
+        delete bubbles[String(bubbleId)]
+        const token = `b:${bubbleId}`
+        return {
+          ...edit,
+          removed_bubbles: [...removed, bubbleId],
+          bubbles,
+          order: (edit.order ?? []).filter((t) => t !== token),
+          paint: (edit.paint ?? []).filter((st) => st.bubble_id !== bubbleId),
+        }
+      })
+      const cur = ensurePage(pages, pageId)
+      const layoutsByBubble = { ...cur.layoutsByBubble }
+      delete layoutsByBubble[bubbleId]
+      const textId = `txt_${bubbleId}`
+      const textLayers = cur.textLayers
+        ? cur.textLayers.filter(
+            (l) => l.id !== textId && l.bubble_id !== bubbleId,
+          )
+        : null
+      return {
+        pages: {
+          ...pages,
+          [pageId]: {
+            ...cur,
+            layoutsByBubble,
+            textLayers,
+            selectedBubbleId:
+              cur.selectedBubbleId === bubbleId ? null : cur.selectedBubbleId,
           },
         },
       }
@@ -1231,6 +1447,7 @@ export const useSession = create<SessionState>((set, get) => ({
       ui: {
         ...s.ui,
         activeTool: 'select',
+        regionKind: null,
         zoomPercent: 100,
         zoomCmd: null,
         galleryDrawerOpen: false,
@@ -1301,13 +1518,20 @@ export function disabledLayerIdsFromEdit(
 
 export function doneCountFromEdit(edit: PageEdit | undefined): number {
   if (!edit) return 0
-  return Object.values(edit.bubbles).filter((b) => b.done).length
+  const removed = new Set(edit.removed_bubbles ?? [])
+  return Object.entries(edit.bubbles).filter(([key, b]) => {
+    if (!b.done) return false
+    const bid = Number(key)
+    return !removed.has(bid)
+  }).length
 }
 
 export function translatedCountFromEdit(edit: PageEdit | undefined): number {
   if (!edit) return 0
+  const removed = new Set(edit.removed_bubbles ?? [])
   let n = 0
-  for (const be of Object.values(edit.bubbles)) {
+  for (const [key, be] of Object.entries(edit.bubbles)) {
+    if (removed.has(Number(key))) continue
     if (typeof be.text === 'string' && be.text.trim()) n += 1
   }
   for (const r of edit.regions ?? []) {
