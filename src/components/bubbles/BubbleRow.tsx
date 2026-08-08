@@ -36,7 +36,7 @@ export function BubbleRow({
         onClick={onSelect}
         title={`Balon #${bubble.id}`}
         className={cn(
-          'flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus)]',
+          'flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left transition-[background-color,box-shadow,opacity,color] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus)]',
           selected
             ? 'bg-[var(--color-selection)] ring-1 ring-[var(--color-accent)]'
             : 'hover:bg-[var(--color-surface-muted)]',
@@ -65,7 +65,7 @@ export function BubbleRow({
         <button
           type="button"
           aria-label="Balonu sil"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-[var(--color-ink-muted)] opacity-0 hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] group-hover:opacity-100"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-[var(--color-ink-muted)] opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] group-hover:opacity-100"
           onClick={(e) => {
             e.stopPropagation()
             onDelete()

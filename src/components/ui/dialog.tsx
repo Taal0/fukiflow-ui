@@ -14,10 +14,12 @@ export function DialogContent({
 }: DialogPrimitive.DialogContentProps) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-[ff-fade-in_var(--duration-normal)_var(--ease-out-soft)] data-[state=closed]:animate-[ff-fade-out_150ms_ease-in]" />
       <DialogPrimitive.Content
         className={cn(
           'fixed left-1/2 top-1/2 z-50 max-h-[min(90vh,36rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg bg-[var(--color-surface-raised)] p-5 shadow-lg ring-1 ring-[var(--color-border)] focus:outline-none',
+          'data-[state=open]:animate-[ff-dialog-in_var(--duration-slow)_var(--ease-out-soft)]',
+          'data-[state=closed]:animate-[ff-dialog-out_150ms_ease-in]',
           className,
         )}
         {...props}

@@ -50,7 +50,7 @@ export interface BubbleFlag {
 const FLAG_DEFS: Record<FlagCode, Omit<BubbleFlag, 'code'>> = {
   clean_editor: {
     label: 'Zemin dokulu',
-    hint: 'Zemin dokulu, otomatik silinemedi.',
+    hint: 'Zemin dokulu, otomatik silinemedi. Fırçayla temizleyip isteğe bağlı dizgi deneyebilirsin.',
     action: { label: 'Fırçayla temizle', kind: 'paint' },
   },
   empty_mask: {

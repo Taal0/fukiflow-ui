@@ -29,7 +29,7 @@ export function ChapterCard({ chapter, onOpen, onDelete }: ChapterCardProps) {
   return (
     <article
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] transition-colors',
+        'group relative flex flex-col overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] transition-[border-color,box-shadow,background-color] duration-200 ease-out',
         'hover:bg-[var(--color-surface-raised)] focus-within:ring-2 focus-within:ring-[var(--color-focus)]',
       )}
     >

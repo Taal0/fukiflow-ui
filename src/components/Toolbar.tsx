@@ -22,9 +22,11 @@ import { ApiError, api, triggerDownload } from '@/api/client'
 import type { FontInfo, PageDetail, PageSummary } from '@/api/types'
 import { BrandMark } from '@/components/BrandMark'
 import { FontSelect } from '@/components/FontSelect'
+import { RoleSwitch } from '@/components/RoleSwitch'
 import { ViewToggle } from '@/components/ViewToggle'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/dialog'
+import { Segmented } from '@/components/ui/segmented'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,21 +42,9 @@ import {
 } from '@/lib/workingDoc'
 import {
   pageFontFromEdit,
-  type ThemePreference,
   useSession,
 } from '@/store/session'
 import { toast, dismissToast, updateToast } from '@/store/toast'
-import { cn } from '@/lib/utils'
-
-const THEME_OPTIONS: {
-  id: ThemePreference
-  label: string
-  Icon: typeof Sun
-}[] = [
-  { id: 'light', label: 'Açık', Icon: Sun },
-  { id: 'dark', label: 'Koyu', Icon: Moon },
-  { id: 'system', label: 'Sistem', Icon: Monitor },
-]
 
 interface ToolbarProps {
   pageLabel?: string
@@ -188,18 +178,19 @@ export function Toolbar({
             className="outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
             title="Projeler"
           >
-            <BrandMark />
+            <BrandMark size="sm" />
           </Link>
-          <Link
-            to={chapterSlug ? `/translate/${chapterSlug}` : '/'}
-            className="shrink-0 text-[length:var(--text-meta)] text-[var(--color-ink-muted)] underline-offset-2 hover:text-[var(--color-ink)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
-          >
-            Çevirmen
-          </Link>
+          <RoleSwitch value="letterer" chapterSlug={chapterSlug} />
           {pageLabel && (
-            <span className="truncate text-[length:var(--text-ui)] text-[var(--color-ink-muted)]">
-              {pageLabel}
-            </span>
+            <>
+              <div className="mx-1 hidden h-5 w-px bg-[var(--color-border)] sm:block" />
+              <span
+                className="hidden min-w-0 truncate text-[length:var(--text-meta)] text-[var(--color-ink-muted)] sm:inline"
+                title={pageLabel}
+              >
+                {pageLabel}
+              </span>
+            </>
           )}
           <FontSelect
             fonts={fonts}
@@ -211,7 +202,7 @@ export function Toolbar({
             allowEmpty
             emptyLabel="Varsayılan font"
             title="Sayfa geneli font"
-            className="ml-1 hidden w-36 lg:block"
+            className="ml-1 hidden w-36 lg:inline-flex"
           />
         </div>
 
@@ -342,32 +333,42 @@ export function Toolbar({
                 Tema
               </DropdownMenuLabel>
               <div
-                role="group"
-                aria-label="Tema"
-                className="flex items-center justify-stretch gap-1 px-2 pb-1.5"
+                className="px-2 pb-1.5"
                 onPointerDown={(e) => e.preventDefault()}
               >
-                {THEME_OPTIONS.map(({ id, label, Icon }) => {
-                  const on = theme === id
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      title={label}
-                      aria-label={label}
-                      aria-pressed={on}
-                      onClick={() => setTheme(id)}
-                      className={cn(
-                        'flex h-8 flex-1 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
-                        on
-                          ? 'bg-[var(--color-accent)] text-white'
-                          : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
-                      )}
-                    >
-                      <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-                    </button>
-                  )
-                })}
+                <Segmented
+                  ariaLabel="Tema"
+                  value={theme}
+                  onChange={setTheme}
+                  size="md"
+                  fill
+                  options={[
+                    {
+                      value: 'light' as const,
+                      title: 'Açık',
+                      ariaLabel: 'Açık',
+                      label: (
+                        <Sun className="mx-auto h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                      ),
+                    },
+                    {
+                      value: 'dark' as const,
+                      title: 'Koyu',
+                      ariaLabel: 'Koyu',
+                      label: (
+                        <Moon className="mx-auto h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                      ),
+                    },
+                    {
+                      value: 'system' as const,
+                      title: 'Sistem',
+                      ariaLabel: 'Sistem',
+                      label: (
+                        <Monitor className="mx-auto h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                      ),
+                    },
+                  ]}
+                />
               </div>
             </DropdownMenuContent>
           </DropdownMenu>

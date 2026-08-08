@@ -127,7 +127,7 @@ export function ToolRail({ tools = LETTERER_TOOLS }: ToolRailProps) {
                       aria-pressed={on}
                       aria-haspopup="menu"
                       className={cn(
-                        'flex h-9 w-9 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
+                        'flex h-9 w-9 items-center justify-center rounded-md transition-[background-color,color,transform] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
                         on
                           ? 'bg-[var(--color-accent)] text-white'
                           : 'text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]',
@@ -182,7 +182,7 @@ export function ToolRail({ tools = LETTERER_TOOLS }: ToolRailProps) {
                 aria-pressed={on}
                 onClick={() => setActiveTool(t.id)}
                 className={cn(
-                  'flex h-9 w-9 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
+                  'flex h-9 w-9 items-center justify-center rounded-md transition-[background-color,color,transform] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]',
                   on
                     ? 'bg-[var(--color-accent)] text-white'
                     : 'text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]',
