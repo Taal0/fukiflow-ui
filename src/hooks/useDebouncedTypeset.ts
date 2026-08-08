@@ -22,7 +22,15 @@ function editFingerprint(
 }
 
 export function useDebouncedTypeset(detail: PageDetail | undefined) {
-  const pageId = detail?.page.id
+  const selectedPageId = useSession((s) => s.selectedPageId)
+  // Never typeset against a stale detail from another page (same bubble ids
+  // across re-uploads would write layouts onto the wrong manga).
+  const pageId =
+    detail != null &&
+    selectedPageId != null &&
+    detail.page.id === selectedPageId
+      ? selectedPageId
+      : undefined
   const pageSession = useSession((s) =>
     pageId != null ? s.pages[pageId] : undefined,
   )

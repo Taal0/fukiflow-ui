@@ -6,6 +6,14 @@ export function pageQueryKey(pageId: number) {
   return ['pages', pageId] as const
 }
 
+/** True when cached/fetched detail is exactly the selected page (no cross-page bleed). */
+export function isDetailForPage(
+  detail: PageDetail | undefined,
+  pageId: number | null | undefined,
+): detail is PageDetail {
+  return pageId != null && detail != null && detail.page.id === pageId
+}
+
 const EMPTY_EDIT: PageEdit = {
   rev: 0,
   page: {},

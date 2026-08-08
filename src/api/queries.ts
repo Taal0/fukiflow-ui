@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { api, type TypesetBody, type TypesetResult } from './client'
 import {
   applyPageEditToCache,
@@ -6,7 +7,7 @@ import {
   invalidateChapterOverlayLists,
   pageQueryKey,
 } from './pageCache'
-import type { PageEdit } from './types'
+import type { PageDetail, PageEdit } from './types'
 
 /** Truly immutable catalogs (fonts, seed asset URLs don't change mid-session). */
 const IMMUTABLE_STALE = 1000 * 60 * 60
@@ -45,18 +46,48 @@ export function useChapterProgress(slug: string | undefined) {
   })
 }
 
+/**
+ * Only return detail that belongs to ``pageId``.
+ *
+ * Never keep-previous across page keys: identical re-uploads share bubble ids,
+ * so merging page A's seed with page B's overlay makes translations look like
+ * they jumped between mangas.
+ */
 export function usePage(pageId: number | null | undefined) {
-  return useQuery({
+  const query = useQuery({
     queryKey: pageId != null ? pageQueryKey(pageId) : ['pages', 'none'],
     queryFn: () => api.page(pageId!),
     enabled: pageId != null,
     staleTime: PAGE_STALE,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
-    // Keep the previous page on screen while the next one fetches — otherwise
-    // PageCanvas unmounts and the fit-to-view race blanks the viewport.
-    placeholderData: (previous) => previous,
   })
+
+  const data: PageDetail | undefined =
+    pageId != null && query.data?.page.id === pageId ? query.data : undefined
+
+  return { ...query, data }
+}
+
+/** Warm prev/next page queries so gallery flips stay on the held page briefly or skip the wait. */
+export function usePrefetchNeighborPages(
+  selectedPageId: number | null | undefined,
+  pageIds: readonly number[],
+) {
+  const qc = useQueryClient()
+  useEffect(() => {
+    if (selectedPageId == null || pageIds.length < 2) return
+    const idx = pageIds.indexOf(selectedPageId)
+    if (idx < 0) return
+    for (const id of [pageIds[idx - 1], pageIds[idx + 1]]) {
+      if (id == null) continue
+      void qc.prefetchQuery({
+        queryKey: pageQueryKey(id),
+        queryFn: () => api.page(id),
+        staleTime: PAGE_STALE,
+      })
+    }
+  }, [qc, selectedPageId, pageIds])
 }
 
 export function useFonts() {

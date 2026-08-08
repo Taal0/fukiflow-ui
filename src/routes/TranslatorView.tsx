@@ -8,6 +8,7 @@ import {
   useDeletePageMutation,
   useFonts,
   usePage,
+  usePrefetchNeighborPages,
 } from '@/api/queries'
 import { PageCanvas } from '@/canvas/PageCanvas'
 import { ToolRail } from '@/components/canvas/ToolRail'
@@ -17,6 +18,7 @@ import { MobileWarning } from '@/components/MobileWarning'
 import { PageGallery } from '@/components/PageGallery'
 import { ShortcutsHelp } from '@/components/ShortcutsHelp'
 import { BrandMark } from '@/components/BrandMark'
+import { RoleSwitch } from '@/components/RoleSwitch'
 import { ViewToggle } from '@/components/ViewToggle'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -27,6 +29,7 @@ import { TranslatorPanel } from '@/components/translator/TranslatorPanel'
 import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
 import { useDebouncedVerify } from '@/hooks/useDebouncedVerify'
+import { useHeldPageDetail } from '@/hooks/useHeldPageDetail'
 import { useHydratePageEdit } from '@/hooks/useHydratePageEdit'
 import { useResizablePanel } from '@/hooks/useResizablePanel'
 import { useResolveConflict } from '@/hooks/useResolveConflict'
@@ -78,9 +81,6 @@ export function TranslatorView() {
   const galleryDrawerOpen = useSession((s) => s.ui.galleryDrawerOpen)
   const patchUi = useSession((s) => s.patchUi)
   const setActiveTool = useSession((s) => s.setActiveTool)
-  const pageSession = useSession((s) =>
-    selectedPageId != null ? s.pages[selectedPageId] : undefined,
-  )
   const pagesMap = useSession((s) => s.pages)
   const deletePage = useDeletePageMutation()
 
@@ -122,7 +122,10 @@ export function TranslatorView() {
       return
     }
     if (routeSlug) {
-      if (chapterSlug !== routeSlug) setChapterSlug(routeSlug)
+      if (chapterSlug !== routeSlug) {
+        setChapterSlug(routeSlug)
+        selectPage(null)
+      }
       return
     }
     // Bare /translate → catalog (no auto-pick).
@@ -133,11 +136,13 @@ export function TranslatorView() {
     chapterSlug,
     routeSlug,
     setChapterSlug,
+    selectPage,
     navigate,
   ])
 
   const pagesQuery = useChapterPages(chapterSlug ?? undefined)
   const pages = pagesQuery.data ?? []
+  const chapterPageIds = useMemo(() => pages.map((p) => p.id), [pages])
 
   /** Navigate + store together — URL is source of truth for deep links. */
   const goToPage = (pageId: number) => {
@@ -173,6 +178,12 @@ export function TranslatorView() {
   }, [pages, chapterSlug, routePageId, selectPage, navigate])
 
   const pageQuery = usePage(selectedPageId)
+  usePrefetchNeighborPages(selectedPageId, chapterPageIds)
+  const held = useHeldPageDetail(selectedPageId, pageQuery.data, chapterSlug)
+  const activePageId = held?.pageId ?? null
+  const pageSession = useSession((s) =>
+    activePageId != null ? s.pages[activePageId] : undefined,
+  )
   const fontsQuery = useFonts()
   const fonts = fontsQuery.data ?? []
 
@@ -196,17 +207,17 @@ export function TranslatorView() {
 
   const keys = useTranslatorKeys({
     pages,
-    doc: pageQuery.data?.doc,
-    pageId: selectedPageId,
+    doc: held?.detail.doc,
+    pageId: activePageId,
     edit: pageSession?.edit,
     onSelectPage: goToPage,
   })
 
   const workingDetail = useMemo(() => {
-    if (!pageQuery.data) return undefined
-    const working = buildWorkingDoc(pageQuery.data.doc, pageSession)
-    return { ...pageQuery.data, doc: working }
-  }, [pageQuery.data, pageSession])
+    if (!held) return undefined
+    const working = buildWorkingDoc(held.detail.doc, pageSession)
+    return { ...held.detail, doc: working }
+  }, [held, pageSession])
 
   const galleryPages = useMemo(() => {
     return pages.map((p) => {
@@ -392,17 +403,9 @@ export function TranslatorView() {
             >
               <BrandMark size="sm" />
             </Link>
-            <span className="hidden rounded bg-[var(--color-accent-soft)] px-2 py-0.5 text-[length:var(--text-meta)] font-medium text-[var(--color-accent)] sm:inline">
-              Çevirmen
-            </span>
-            <Link
-              to={chapterSlug ? `/edit/${chapterSlug}` : '/'}
-              className="shrink-0 text-[length:var(--text-ui)] text-[var(--color-ink-muted)] underline-offset-2 hover:text-[var(--color-ink)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
-            >
-              Letterer
-            </Link>
+            <RoleSwitch value="translator" chapterSlug={chapterSlug} />
 
-            <div className="mx-2 hidden h-5 w-px bg-[var(--color-border)] sm:block" />
+            <div className="mx-1 hidden h-5 w-px bg-[var(--color-border)] sm:block" />
 
             {/* Page switcher — primary nav for translator flow */}
             <div className="flex min-w-0 items-center gap-0.5">
@@ -418,7 +421,7 @@ export function TranslatorView() {
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span
-                className="min-w-0 max-w-[10rem] truncate text-center text-[length:var(--text-ui)] tabular-nums text-[var(--color-ink)] sm:max-w-[14rem]"
+                className="min-w-[4.5rem] text-center text-[length:var(--text-ui)] tabular-nums text-[var(--color-ink)]"
                 title={pageLabel ?? undefined}
               >
                 {pageIdx >= 0
@@ -437,7 +440,7 @@ export function TranslatorView() {
                 <ChevronRight className="h-4 w-4" />
               </Button>
               {pageLabel && (
-                <span className="ml-1 hidden min-w-0 truncate text-[length:var(--text-meta)] text-[var(--color-ink-muted)] md:inline">
+                <span className="ml-1 hidden min-w-0 max-w-[12rem] truncate text-[length:var(--text-meta)] text-[var(--color-ink-muted)] md:inline">
                   {pageLabel}
                 </span>
               )}
@@ -460,6 +463,11 @@ export function TranslatorView() {
                   mode="translator"
                 />
                 <ZoomControls />
+                {(held?.isTransitioning || pageQuery.isFetching) && (
+                  <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-[var(--color-surface-raised)]/90 px-2 py-1 text-[length:var(--text-meta)] text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
+                    Sayfa yükleniyor…
+                  </div>
+                )}
               </>
             ) : pageQuery.isLoading ? (
               <EmptyState title="Sayfa yükleniyor…" />
@@ -487,21 +495,19 @@ export function TranslatorView() {
                 onSelectBubble={(id) => selectBubble(id)}
                 onSelectRegion={(id) => selectRegion(id)}
                 onBubbleText={(id, text) => {
-                  if (selectedPageId != null)
-                    setBubbleText(selectedPageId, id, text)
+                  if (activePageId != null) setBubbleText(activePageId, id, text)
                 }}
                 onRegionText={(id, text) => {
-                  if (selectedPageId != null)
-                    setRegionText(selectedPageId, id, text)
+                  if (activePageId != null) setRegionText(activePageId, id, text)
                 }}
                 onDeleteRegion={(id) => {
-                  if (selectedPageId != null) deleteRegion(selectedPageId, id)
+                  if (activePageId != null) deleteRegion(activePageId, id)
                 }}
                 onDeleteBubble={(id) => {
-                  if (selectedPageId != null) deleteBubble(selectedPageId, id)
+                  if (activePageId != null) deleteBubble(activePageId, id)
                 }}
                 onReorder={(tokens) => {
-                  if (selectedPageId != null) reorder(selectedPageId, tokens)
+                  if (activePageId != null) reorder(activePageId, tokens)
                 }}
               />
             ) : (
@@ -525,11 +531,11 @@ export function TranslatorView() {
           />
         }
       />
-      {selectedPageId != null && (
+      {activePageId != null && (
         <ConflictDialog
           open={pageSession?.saveStatus === 'conflict'}
-          onTakeServer={() => conflict.takeServer(selectedPageId)}
-          onKeepMine={() => conflict.keepMine(selectedPageId)}
+          onTakeServer={() => conflict.takeServer(activePageId)}
+          onKeepMine={() => conflict.keepMine(activePageId)}
         />
       )}
       <ShortcutsHelp

@@ -8,6 +8,7 @@ import {
   useDeletePageMutation,
   useFonts,
   usePage,
+  usePrefetchNeighborPages,
 } from '@/api/queries'
 import { textLayerId } from '@/api/types'
 import { PageCanvas } from '@/canvas/PageCanvas'
@@ -30,6 +31,7 @@ import { StatusBar } from '@/components/layout/StatusBar'
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell'
 import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
+import { useHeldPageDetail } from '@/hooks/useHeldPageDetail'
 import { useHydratePageEdit } from '@/hooks/useHydratePageEdit'
 import { useResizablePanel } from '@/hooks/useResizablePanel'
 import { useResolveConflict } from '@/hooks/useResolveConflict'
@@ -95,9 +97,6 @@ export function WorkspaceView() {
   const zoomPercent = useSession((s) => s.ui.zoomPercent)
   const galleryDrawerOpen = useSession((s) => s.ui.galleryDrawerOpen)
   const patchUi = useSession((s) => s.patchUi)
-  const pageSession = useSession((s) =>
-    selectedPageId != null ? s.pages[selectedPageId] : undefined,
-  )
   const deleteEdit = useDeletePageEditMutation()
   const deletePage = useDeletePageMutation()
   const [guideOpen, setGuideOpen] = useState(false)
@@ -140,13 +139,29 @@ export function WorkspaceView() {
   })
 
   const pagesQ = useChapterPages(chapterSlug ?? undefined)
+  const chapterPageIds = useMemo(
+    () => pagesQ.data?.map((p) => p.id) ?? [],
+    [pagesQ.data],
+  )
   const fontsQ = useFonts()
   const pageQ = usePage(selectedPageId)
+  usePrefetchNeighborPages(selectedPageId, chapterPageIds)
+  const held = useHeldPageDetail(selectedPageId, pageQ.data, chapterSlug)
+  // Paint/edit the held page so seed + overlay stay paired during fetches.
+  const activePageId = held?.pageId ?? null
+  const pageSession = useSession((s) =>
+    activePageId != null ? s.pages[activePageId] : undefined,
+  )
 
   useHydratePageEdit(selectedPageId, pageQ.data)
 
+  // Drop a selection that belongs to another manga (chapter switch / stale store).
   useEffect(() => {
-    if (selectedPageId != null || !pagesQ.data?.length) return
+    if (!pagesQ.data?.length) return
+    const valid =
+      selectedPageId != null &&
+      pagesQ.data.some((p) => p.id === selectedPageId)
+    if (valid) return
     selectPage(pagesQ.data[0]!.id)
   }, [pagesQ.data, selectedPageId, selectPage])
 
@@ -178,10 +193,10 @@ export function WorkspaceView() {
   }, [pageSession?.saveStatus, pageSession?.saveError])
 
   const workingDetail = useMemo(() => {
-    if (!pageQ.data) return undefined
-    const doc = buildWorkingDoc(pageQ.data.doc, pageSession)
-    return { ...pageQ.data, doc }
-  }, [pageQ.data, pageSession])
+    if (!held) return undefined
+    const doc = buildWorkingDoc(held.detail.doc, pageSession)
+    return { ...held.detail, doc }
+  }, [held, pageSession])
 
   const chapterTitle =
     chapters.data?.find((c) => c.slug === chapterSlug)?.title ?? chapterSlug
@@ -252,8 +267,8 @@ export function WorkspaceView() {
     bubbleIds: number[],
     frames?: Record<number, [number, number, number, number]>,
   ) => {
-    if (!workingDetail || selectedPageId == null) return
-    const session = useSession.getState().pages[selectedPageId]
+    if (!workingDetail || activePageId == null) return
+    const session = useSession.getState().pages[activePageId]
     const forceOverrides: Record<
       number,
       { font_px?: number; frame?: [number, number, number, number] }
@@ -282,7 +297,7 @@ export function WorkspaceView() {
       if (be?.font_px == null) patch.font_px = fontPx
       if (!be?.frame && !frames?.[id]) patch.frame = frame
       if (Object.keys(patch).length) {
-        useSession.getState().patchBubble(selectedPageId, id, patch, {
+        useSession.getState().patchBubble(activePageId, id, patch, {
           undo: false,
         })
       }
@@ -300,18 +315,18 @@ export function WorkspaceView() {
   const { shortcutsOpen, setShortcutsOpen } = useWorkspaceKeys({
     pages: pagesQ.data ?? [],
     doc: workingDetail?.doc,
-    pageId: selectedPageId,
+    pageId: activePageId,
   })
 
   const resetPage = async () => {
-    if (selectedPageId == null) return
+    if (activePageId == null) return
     try {
-      await deleteEdit.mutateAsync(selectedPageId)
-      resetPageLocal(selectedPageId)
+      await deleteEdit.mutateAsync(activePageId)
+      resetPageLocal(activePageId)
       toast('Sayfa sıfırlandı', 'success')
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        resetPageLocal(selectedPageId)
+        resetPageLocal(activePageId)
         toast('Sayfa sıfırlandı', 'success')
         return
       }
@@ -401,50 +416,50 @@ export function WorkspaceView() {
         width={panelResize.width}
         onSelect={selectBubble}
         onToggleLayer={(layerId, enabled) => {
-          if (selectedPageId == null) return
-          setLayerEnabled(selectedPageId, layerId, enabled)
+          if (activePageId == null) return
+          setLayerEnabled(activePageId, layerId, enabled)
         }}
         onTextChange={(bubbleId, text) => {
-          if (selectedPageId == null) return
-          setBubbleText(selectedPageId, bubbleId, text)
+          if (activePageId == null) return
+          setBubbleText(activePageId, bubbleId, text)
         }}
         onResetText={(bubbleId) => {
-          if (selectedPageId == null) return
-          clearBubbleText(selectedPageId, bubbleId)
+          if (activePageId == null) return
+          clearBubbleText(activePageId, bubbleId)
         }}
         onBubbleFont={(bubbleId, fontKey) => {
-          if (selectedPageId == null) return
-          setBubbleFont(selectedPageId, bubbleId, fontKey)
+          if (activePageId == null) return
+          setBubbleFont(activePageId, bubbleId, fontKey)
         }}
         onFontPx={(bubbleId, px) => {
-          if (selectedPageId == null) return
-          setFontPx(selectedPageId, bubbleId, px)
+          if (activePageId == null) return
+          setFontPx(activePageId, bubbleId, px)
         }}
         onLeading={(bubbleId, leading) => {
-          if (selectedPageId == null) return
-          setLeading(selectedPageId, bubbleId, leading)
+          if (activePageId == null) return
+          setLeading(activePageId, bubbleId, leading)
         }}
         onAlign={(bubbleId, align) => {
-          if (selectedPageId == null) return
-          setAlign(selectedPageId, bubbleId, align)
+          if (activePageId == null) return
+          setAlign(activePageId, bubbleId, align)
         }}
         onResetFrame={(bubbleId) => {
-          if (selectedPageId == null) return
-          setFrame(selectedPageId, bubbleId, null)
+          if (activePageId == null) return
+          setFrame(activePageId, bubbleId, null)
           autoTypesetBubbles([bubbleId])
         }}
         onAutoTypeset={(bubbleId) => autoTypesetBubbles([bubbleId])}
         onToggleDone={(bubbleId, done) => {
-          if (selectedPageId == null) return
-          setBubbleDone(selectedPageId, bubbleId, done)
+          if (activePageId == null) return
+          setBubbleDone(activePageId, bubbleId, done)
         }}
         onInset={(bubbleId, inset) => {
-          if (selectedPageId == null) return
-          setInset(selectedPageId, bubbleId, inset)
+          if (activePageId == null) return
+          setInset(activePageId, bubbleId, inset)
         }}
         onDeleteBubble={(bubbleId) => {
-          if (selectedPageId == null) return
-          deleteBubble(selectedPageId, bubbleId)
+          if (activePageId == null) return
+          deleteBubble(activePageId, bubbleId)
         }}
       />
     </div>
@@ -467,12 +482,12 @@ export function WorkspaceView() {
       <ConflictDialog
         open={pageSession?.saveStatus === 'conflict'}
         onTakeServer={() => {
-          if (selectedPageId != null) conflict.takeServer(selectedPageId)
+          if (activePageId != null) conflict.takeServer(activePageId)
         }}
         onKeepMine={() => {
-          if (selectedPageId == null) return
-          conflict.keepMine(selectedPageId)
-          retrySave(selectedPageId)
+          if (activePageId == null) return
+          conflict.keepMine(activePageId)
+          retrySave(activePageId)
         }}
       />
 
@@ -498,15 +513,15 @@ export function WorkspaceView() {
               autoTypesetBubbles(workingDetail.doc.bubbles.map((b) => b.id))
             }}
             onRetrySave={() => {
-              if (selectedPageId != null) retrySave(selectedPageId)
+              if (activePageId != null) retrySave(activePageId)
             }}
             onOpenShortcuts={() => setShortcutsOpen(true)}
             onOpenGuide={() => setGuideOpen(true)}
             onUndo={() => {
-              if (selectedPageId != null) undo(selectedPageId)
+              if (activePageId != null) undo(activePageId)
             }}
             onRedo={() => {
-              if (selectedPageId != null) redo(selectedPageId)
+              if (activePageId != null) redo(activePageId)
             }}
           />
         }
@@ -533,8 +548,8 @@ export function WorkspaceView() {
               <ToolOptionsBar
                 selectedBubbleId={pageSession?.selectedBubbleId ?? null}
                 onClearPaint={(bubbleId) => {
-                  if (selectedPageId == null) return
-                  clearPaintForBubble(selectedPageId, bubbleId)
+                  if (activePageId == null) return
+                  clearPaintForBubble(activePageId, bubbleId)
                 }}
               />
             )}
@@ -564,7 +579,7 @@ export function WorkspaceView() {
                   description="Soldan bir sayfa seçerek düzenlemeye başlayın."
                 />
               )}
-              {pageQ.isFetching && workingDetail && (
+              {(held?.isTransitioning || pageQ.isFetching) && workingDetail && (
                 <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-[var(--color-surface-raised)]/90 px-2 py-1 text-[length:var(--text-meta)] text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
                   Sayfa yükleniyor…
                 </div>

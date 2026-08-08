@@ -30,7 +30,13 @@ function regionsFingerprint(pageId: number, regions: Region[]): string {
 }
 
 export function useDebouncedVerify(detail: PageDetail | undefined) {
-  const pageId = detail?.page.id
+  const selectedPageId = useSession((s) => s.selectedPageId)
+  const pageId =
+    detail != null &&
+    selectedPageId != null &&
+    detail.page.id === selectedPageId
+      ? selectedPageId
+      : undefined
   const pageSession = useSession((s) =>
     pageId != null ? s.pages[pageId] : undefined,
   )
