@@ -135,10 +135,10 @@ export type OrderBadgeItem = {
 /** Draw dashed translator regions (visible overlay — not in compose export). */
 export function drawRegions(
   ctx: CanvasRenderingContext2D,
-  regions: { id: string; bbox: BBox }[],
+  regions: { id: string; bbox: BBox; status?: string; kind?: string }[],
   activeId: string | null,
   scale: number,
-  opts?: { interactive?: boolean },
+  opts?: { interactive?: boolean; pulsePhase?: number },
 ): void {
   const interactive = opts?.interactive ?? true
   const stroke = Math.max(1, 1.5 / scale)
@@ -148,15 +148,39 @@ export function drawRegions(
           .getPropertyValue('--color-focus')
           .trim() || '#2a6fdb'
       : '#2a6fdb'
+  const pulse = opts?.pulsePhase ?? 0
 
   for (const region of regions) {
     const [x0, y0, x1, y1] = region.bbox
     const active = region.id === activeId
+    const status = region.status ?? 'unclassified'
+    const kind = region.kind ?? 'bubble'
+    // Kind base colors; status overrides for bubble YOLO states.
+    let color =
+      kind === 'sfx' ? '#7c3aed' : kind === 'other' ? '#6b7280' : '#2a6fdb'
+    let alpha = active ? 1 : 0.75
+    let dash: number[] = [6 / scale, 4 / scale]
+    if (status === 'verifying') {
+      color = '#d97706'
+      alpha = 0.55 + 0.35 * (0.5 + 0.5 * Math.sin(pulse))
+      dash = [4 / scale, 4 / scale]
+    } else if (status === 'unconfirmed') {
+      color = '#c2410c'
+      dash = [5 / scale, 5 / scale]
+    } else if (status === 'confirmed' && kind === 'bubble') {
+      color = '#15803d'
+      dash = []
+    } else if (status === 'confirmed') {
+      // sfx / other — solid stroke in kind color
+      dash = []
+    }
+    if (active) color = focus
+
     ctx.save()
-    ctx.strokeStyle = active ? focus : '#2a6fdb'
-    ctx.globalAlpha = active ? 1 : 0.75
+    ctx.strokeStyle = color
+    ctx.globalAlpha = alpha
     ctx.lineWidth = stroke
-    ctx.setLineDash([6 / scale, 4 / scale])
+    ctx.setLineDash(dash)
     ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
     ctx.setLineDash([])
 

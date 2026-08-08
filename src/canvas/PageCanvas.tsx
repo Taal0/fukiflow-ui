@@ -160,7 +160,9 @@ export function PageCanvas({
   const selectedRegionId = pageSession?.selectedRegionId ?? null
   const edit = pageSession?.edit
   const regions = edit?.regions ?? []
-  const regionTool = mode === 'translator' && activeTool === 'region'
+  const regionKind = useSession((s) => s.ui.regionKind)
+  const regionTool =
+    mode === 'translator' && activeTool === 'region' && regionKind != null
   const brushActive = mode === 'letterer' && brush.mode !== 'off'
   const disabledLayerIds = useMemo(
     () => (edit ? disabledLayerIdsFromEdit(edit) : EMPTY_SET),
@@ -468,15 +470,27 @@ export function PageCanvas({
     }
 
     // Visible overlay pass: regions + order badges (never baked into compose).
-    const overlayRegions: { id: string; bbox: BBox }[] = regions.map((r) => ({
+    const hasVerifying = regions.some((r) => r.status === 'verifying')
+    const overlayRegions: {
+      id: string
+      bbox: BBox
+      status?: string
+      kind?: string
+    }[] = regions.map((r) => ({
       id: r.id,
+      status: r.status,
+      kind: r.kind ?? 'bubble',
       bbox:
         r.id === selectedRegionId && liveRegionEditRef.current
           ? liveRegionEditRef.current
           : r.bbox,
     }))
     if (liveRegionRef.current) {
-      overlayRegions.push({ id: '__live__', bbox: liveRegionRef.current })
+      overlayRegions.push({
+        id: '__live__',
+        bbox: liveRegionRef.current,
+        kind: regionKind ?? 'bubble',
+      })
     }
     if (overlayRegions.length || mode === 'translator') {
       ctx.save()
@@ -488,7 +502,10 @@ export function PageCanvas({
           overlayRegions,
           selectedRegionId,
           t.scale || 1,
-          { interactive: mode === 'translator' },
+          {
+            interactive: mode === 'translator',
+            pulsePhase: hasVerifying ? performance.now() / 200 : 0,
+          },
         )
       }
       if (mode === 'translator') {
@@ -560,9 +577,18 @@ export function PageCanvas({
     theme,
     regions,
     selectedRegionId,
+    regionKind,
     mode,
     edit,
   ])
+
+  // Pulse animation while any region is verifying.
+  useEffect(() => {
+    const verifying = regions.some((r) => r.status === 'verifying')
+    if (!verifying) return
+    const id = window.setInterval(() => schedulePaint(), 80)
+    return () => window.clearInterval(id)
+  }, [regions, schedulePaint])
 
   // Apply zoom commands from ZoomControls.
   useEffect(() => {
@@ -599,17 +625,25 @@ export function PageCanvas({
 
   // Transient tool hint on tool change.
   useEffect(() => {
+    const kindHints: Record<string, string> = {
+      bubble: 'Bubble kutusu çiz',
+      sfx: 'SFX kutusu çiz',
+      other: 'Other kutusu çiz',
+    }
     const labels: Record<string, string> = {
       select: 'Seç',
       frame: 'Kutu — taşı / boyutlandır',
       paint: 'Boya fırçası',
       restore: 'Geri al fırçası',
-      region: 'Metin kutusu çiz',
+      region:
+        regionKind != null
+          ? (kindHints[regionKind] ?? 'Metin kutusu çiz')
+          : 'Kutu türü seç',
     }
     setToolHint(labels[activeTool] ?? null)
     const t = window.setTimeout(() => setToolHint(null), 2000)
     return () => window.clearTimeout(t)
-  }, [activeTool])
+  }, [activeTool, regionKind])
 
   // Leaving region tool (or Esc) cancels an in-progress draw.
   const cancelRegionDraw = useEffectEvent(() => {
@@ -657,7 +691,9 @@ export function PageCanvas({
     }
   }, [])
 
-  const onWheel = (e: React.WheelEvent) => {
+  // Native non-passive wheel: React's onWheel is passive, so preventDefault
+  // would warn and fail to stop browser scroll while zooming.
+  const onWheel = useEffectEvent((e: WheelEvent) => {
     e.preventDefault()
     const rect = canvasRef.current?.getBoundingClientRect()
     if (!rect) return
@@ -674,7 +710,14 @@ export function PageCanvas({
       offsetY: my - page.y * nextScale,
     }
     schedulePaint()
-  }
+  })
+
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [onWheel])
 
   const frameHitAt = (pageX: number, pageY: number): FrameHandle | null => {
     if (!selectedBubble || !storedFrame) return null
@@ -1024,7 +1067,7 @@ export function PageCanvas({
       if (final && drag.moved) {
         const [x0, y0, x1, y1] = final
         if (x1 - x0 >= MIN_REGION_PX && y1 - y0 >= MIN_REGION_PX) {
-          addRegion(pageId, final)
+          addRegion(pageId, final, '', regionKind ?? undefined)
           setActiveTool('select')
         }
       }
@@ -1164,7 +1207,6 @@ export function PageCanvas({
         ref={canvasRef}
         className="block h-full w-full touch-none"
         style={{ cursor }}
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
