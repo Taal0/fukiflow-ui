@@ -26,6 +26,7 @@ import { WorkspaceShell } from '@/components/layout/WorkspaceShell'
 import { TranslatorPanel } from '@/components/translator/TranslatorPanel'
 import { useAutosave } from '@/hooks/useAutosave'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
+import { useDebouncedVerify } from '@/hooks/useDebouncedVerify'
 import { useHydratePageEdit } from '@/hooks/useHydratePageEdit'
 import { useResizablePanel } from '@/hooks/useResizablePanel'
 import { useResolveConflict } from '@/hooks/useResolveConflict'
@@ -66,6 +67,7 @@ export function TranslatorView() {
   const setBubbleText = useSession((s) => s.setBubbleText)
   const setRegionText = useSession((s) => s.setRegionText)
   const deleteRegion = useSession((s) => s.deleteRegion)
+  const deleteBubble = useSession((s) => s.deleteBubble)
   const reorder = useSession((s) => s.reorder)
   const setViewMode = useSession((s) => s.setViewMode)
   const viewMode = useSession((s) => s.viewMode)
@@ -182,10 +184,15 @@ export function TranslatorView() {
     pending: typesetPending,
     error: typesetError,
   } = useDebouncedTypeset(pageQuery.data)
+  const { error: verifyError } = useDebouncedVerify(pageQuery.data)
 
   useEffect(() => {
     if (typesetError) toast(typesetError, 'danger', 5000)
   }, [typesetError])
+
+  useEffect(() => {
+    if (verifyError) toast(verifyError, 'danger', 5000)
+  }, [verifyError])
 
   const keys = useTranslatorKeys({
     pages,
@@ -206,8 +213,11 @@ export function TranslatorView() {
       const session = pagesMap[p.id]
       if (!session?.hydrated) return p
       const regionN = session.edit.regions?.length ?? 0
+      const removedN = session.edit.removed_bubbles?.length ?? 0
       let translated = 0
-      for (const be of Object.values(session.edit.bubbles)) {
+      const removed = new Set(session.edit.removed_bubbles ?? [])
+      for (const [key, be] of Object.entries(session.edit.bubbles)) {
+        if (removed.has(Number(key))) continue
         if (typeof be.text === 'string' && be.text.trim()) translated += 1
       }
       for (const r of session.edit.regions ?? []) {
@@ -216,7 +226,7 @@ export function TranslatorView() {
       return {
         ...p,
         translated_count: translated,
-        bubble_count: p.bubble_count + regionN,
+        bubble_count: Math.max(0, p.bubble_count - removedN) + regionN,
       }
     })
   }, [pages, pagesMap])
@@ -486,6 +496,9 @@ export function TranslatorView() {
                 }}
                 onDeleteRegion={(id) => {
                   if (selectedPageId != null) deleteRegion(selectedPageId, id)
+                }}
+                onDeleteBubble={(id) => {
+                  if (selectedPageId != null) deleteBubble(selectedPageId, id)
                 }}
                 onReorder={(tokens) => {
                   if (selectedPageId != null) reorder(selectedPageId, tokens)
