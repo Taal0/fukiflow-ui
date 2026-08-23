@@ -11,52 +11,70 @@ import {
   useSession,
 } from '@/store/session'
 
-export const FIRST_RUN_STEPS: {
-  step: FirstRunStep
+export type FirstRunSource = 'seed' | 'upload'
+
+type StepCopy = {
   title: string
+  /** “Nasıl çalışır” dialog — path-agnostic, no overclaim. */
   body: string
   tip: string
-}[] = [
-  {
-    step: 1,
+  tipSeed?: string
+}
+
+export const FIRST_RUN_STEPS: Record<FirstRunStep, StepCopy> = {
+  1: {
     title: 'Katalog',
-    body: 'Örnek bölümü açabilir veya kendi manganı yükleyebilirsin.',
-    tip: 'Örnek bölümü açabilir veya kendi manganı yükleyebilirsin.',
+    body: 'Hazır örnek bölümü açabilir veya kendi sayfalarını yükleyebilirsin. Üstten rol seç: çevirmen metni yazar, letterer dizgiyi düzeltir.',
+    tip: 'Örnek bölümü aç veya kendi sayfalarını yükle. Çevirmen metni yazar; letterer dizgiyi düzeltir.',
   },
-  {
-    step: 2,
+  2: {
     title: 'Yükle',
-    body: 'ZIP veya sayfa görsellerini sürükle. AI balonları bulup temizler — ilk sayfa birkaç saniye, sonrakiler daha hızlı.',
-    tip: 'ZIP veya görselleri sürükle — AI balonları bulup temizler (sayfa başına birkaç saniye).',
+    body: 'İsteğe bağlı. ZIP veya görselleri bırakınca sistem balonları bulur ve zemini temizlemeyi dener. Çeviri yazmaz. İlk sayfa birkaç saniye sürebilir. Örnek bölümde bu adım yok.',
+    tip: 'ZIP veya görselleri bırak. Sistem balonları bulur ve zemini temizlemeyi dener — çeviri yazmaz. İlk sayfa birkaç saniye sürebilir.',
   },
-  {
-    step: 3,
-    title: 'Çevirmen kutusu',
-    body: 'Eksik balon veya SFX için kutu çiz, Türkçe metni yaz. Bubble kutuları otomatik doğrulanır; SFX/Other doğrudan onaylanır.',
-    tip: 'Balon/SFX kutusu çiz, Türkçe metni yaz — sistem otomatik doğrulayıp onaylar.',
+  3: {
+    title: 'Çevirmen',
+    body: 'Bulunan balonlara Türkçe yaz; okuma sırasını sürükleyerek düzelt. AI’nın kaçırdığı balon, SFX veya serbest metin için kutu çiz. Çeviride AI yok.',
+    tip: 'Balonlara Türkçe yaz, sırayı sürükle. Kaçırılan balon veya SFX için kutu çiz. Çeviride AI yok.',
+    tipSeed:
+      'Örnekte balonlar hazır — metni yaz veya düzelt, sırayı sürükle. Kaçırılan balon veya SFX için kutu çiz. Çeviride AI yok.',
   },
-  {
-    step: 4,
-    title: 'Letterer düzeltir',
-    body: 'Balonu seç, metni veya fontu düzelt — sayfa otomatik yeniden dizilir. Katmanları karşılaştır, PNG veya bölüm zip indir.',
-    tip: 'Balonu seç, metni/fontu düzelt — sayfa otomatik yeniden dizilir. İndir ile PNG/zip al.',
+  4: {
+    title: 'Letterer',
+    body: 'Dizgi taslağını font, çerçeve, satır aralığı ve fırçayla düzelt. Temizlenemeyen dokulu zemin letterer’da kalır. Çeviri yazmak çevirmenin işi; sen yerleştirirsin. PNG veya bölüm zip indir.',
+    tip: 'Font, çerçeve ve fırçayla dizgiyi düzelt. Taşan veya dokulu yerler letterer işi — çeviri yazmak değil. İndir ile PNG/zip al.',
+    tipSeed:
+      'Örnekte dizgi taslağı hazır. Taşan metni, fontu ve dokulu zeminleri düzelt. Çeviri letterer işi değil. İndir ile PNG/zip al.',
   },
-]
+}
+
+export const FIRST_RUN_STEP_LIST: FirstRunStep[] = [1, 2, 3, 4]
+
+function tipFor(step: FirstRunStep, source: FirstRunSource): string {
+  const entry = FIRST_RUN_STEPS[step]
+  if (source === 'seed' && entry.tipSeed) return entry.tipSeed
+  return entry.tip
+}
 
 /** Dismissible tip strip (first run). */
-export function OnboardingTip({ step }: { step: FirstRunStep }) {
+export function OnboardingTip({
+  step,
+  source = 'upload',
+}: {
+  step: FirstRunStep
+  source?: FirstRunSource
+}) {
   const pending = useSession((s) => isFirstRunPending(s.firstRunDone, step))
   const dismiss = useSession((s) => s.dismissFirstRunStep)
-  const entry = FIRST_RUN_STEPS.find((s) => s.step === step)
 
-  if (!pending || !entry) return null
+  if (!pending) return null
 
   return (
     <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-1.5 text-[length:var(--text-ui)] text-[var(--color-ink)]">
       <span className="min-w-0 flex-1 truncate">
-        <strong className="font-semibold">{entry.step}/4</strong>
+        <strong className="font-semibold">{step}/4</strong>
         {' — '}
-        {entry.tip}
+        {tipFor(step, source)}
       </span>
       <Button
         type="button"
@@ -84,19 +102,22 @@ export function OnboardingGuide({ open, onOpenChange }: OnboardingGuideProps) {
         <DialogTitle>Dört adımda demo</DialogTitle>
         <DialogDescription asChild>
           <ol className="mt-3 flex flex-col gap-4">
-            {FIRST_RUN_STEPS.map((s) => (
-              <li key={s.step} className="flex gap-3">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft)] text-sm font-semibold text-[var(--color-accent)]">
-                  {s.step}
-                </span>
-                <div>
-                  <h3 className="text-sm font-semibold text-[var(--color-ink)]">
-                    {s.title}
-                  </h3>
-                  <p className="text-sm text-[var(--color-ink-muted)]">{s.body}</p>
-                </div>
-              </li>
-            ))}
+            {FIRST_RUN_STEP_LIST.map((step) => {
+              const s = FIRST_RUN_STEPS[step]
+              return (
+                <li key={step} className="flex gap-3">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft)] text-sm font-semibold text-[var(--color-accent)]">
+                    {step}
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--color-ink)]">
+                      {s.title}
+                    </h3>
+                    <p className="text-sm text-[var(--color-ink-muted)]">{s.body}</p>
+                  </div>
+                </li>
+              )
+            })}
           </ol>
         </DialogDescription>
         <div className="mt-5 flex justify-end">

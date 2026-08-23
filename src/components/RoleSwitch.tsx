@@ -32,7 +32,7 @@ export function RoleSwitch({
     <TooltipProvider delayDuration={350}>
       <Tooltip
         side="bottom"
-        label="Çevirmen: kutu çiz + Türkçe yaz. Letterer: temizle + dizgi düzelt."
+        label="Çevirmen: metni yazar, sırayı düzeltir, kaçırılanı işaretler. Letterer: dizgiyi, fontu ve temizliği düzeltir."
       >
         <span className={className}>
           <Segmented

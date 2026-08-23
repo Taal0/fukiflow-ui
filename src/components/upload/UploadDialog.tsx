@@ -185,7 +185,7 @@ export function UploadDialog({
             <div className="mt-4 flex flex-col gap-4">
               {uploadTipPending && (
                 <p className="text-[length:var(--text-ui)] text-[var(--color-ink-muted)]">
-                  {FIRST_RUN_STEPS[1]!.tip}
+                  {FIRST_RUN_STEPS[2].tip}
                 </p>
               )}
               <DropZone

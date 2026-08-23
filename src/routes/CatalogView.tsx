@@ -45,6 +45,10 @@ export function CatalogView() {
   }
 
   const openChapter = (slug: string) => {
+    dismissFirstRunStep(1)
+    const ch = chapters.data?.find((c) => c.slug === slug)
+    // Demo/seed already ran the pipeline — skip the upload tip.
+    if (ch?.source_type !== 'upload') dismissFirstRunStep(2)
     if (workspaceRole === 'translator') {
       navigate(`/translate/${slug}`)
     } else {

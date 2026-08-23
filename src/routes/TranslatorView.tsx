@@ -212,11 +212,6 @@ export function TranslatorView() {
     if (typesetError) toast(typesetError, 'danger', 5000)
   }, [typesetError])
 
-  const regionCount = pageSession?.edit.regions?.length ?? 0
-  useEffect(() => {
-    if (regionCount > 0) dismissFirstRunStep(3)
-  }, [regionCount, dismissFirstRunStep])
-
   useEffect(() => {
     if (verifyError) toast(verifyError, 'danger', 5000)
   }, [verifyError])
@@ -351,7 +346,14 @@ export function TranslatorView() {
 
   const chapterSource =
     chapters.data?.find((c) => c.slug === chapterSlug)?.source_type ?? 'seed'
+  const firstRunSource = chapterSource === 'upload' ? 'upload' : 'seed'
   const canDeletePages = chapterSource === 'upload'
+
+  useEffect(() => {
+    if (!chapterSlug || !chapters.data) return
+    dismissFirstRunStep(1)
+    if (firstRunSource === 'seed') dismissFirstRunStep(2)
+  }, [chapterSlug, chapters.data, firstRunSource, dismissFirstRunStep])
 
   const handleDeletePage = (pageId: number) => {
     const idx = pages.findIndex((p) => p.id === pageId)
@@ -430,7 +432,7 @@ export function TranslatorView() {
       <MobileWarning />
       <OnboardingGuide open={guideOpen} onOpenChange={setGuideOpen} />
       <WorkspaceShell
-        tip={<OnboardingTip step={3} />}
+        tip={<OnboardingTip step={3} source={firstRunSource} />}
         toolbar={
           <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3">
             {isTablet && (

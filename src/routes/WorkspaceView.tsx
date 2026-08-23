@@ -208,7 +208,15 @@ export function WorkspaceView() {
     chapters.data?.find((c) => c.slug === chapterSlug)?.title ?? chapterSlug
   const chapterSource =
     chapters.data?.find((c) => c.slug === chapterSlug)?.source_type ?? 'seed'
+  const firstRunSource = chapterSource === 'upload' ? 'upload' : 'seed'
+  const dismissFirstRunStep = useSession((s) => s.dismissFirstRunStep)
   const canDeletePages = chapterSource === 'upload'
+
+  useEffect(() => {
+    if (!chapterSlug || !chapters.data) return
+    dismissFirstRunStep(1)
+    if (firstRunSource === 'seed') dismissFirstRunStep(2)
+  }, [chapterSlug, chapters.data, firstRunSource, dismissFirstRunStep])
 
   const handleDeletePage = (pageId: number) => {
     const list = pagesQ.data ?? []
@@ -585,7 +593,7 @@ export function WorkspaceView() {
             }}
           />
         }
-        tip={<OnboardingTip step={4} />}
+        tip={<OnboardingTip step={4} source={firstRunSource} />}
         banner={
           (fontsUnavailable || catalogError) && (
             <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-[length:var(--text-ui)] text-[var(--color-ink)]">
