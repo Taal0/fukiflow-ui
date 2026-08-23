@@ -70,17 +70,17 @@ export function OnboardingTip({
   if (!pending) return null
 
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-1.5 text-[length:var(--text-ui)] text-[var(--color-ink)]">
-      <span className="min-w-0 flex-1 truncate">
-        <strong className="font-semibold">{step}/4</strong>
-        {' — '}
+    <div className="relative flex shrink-0 items-center justify-center border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-16 py-2.5 text-[var(--color-ink)]">
+      <p className="max-w-3xl text-center text-[length:var(--text-title)] leading-snug">
+        <span className="font-semibold">{step}.</span>
+        {' '}
         {tipFor(step, source)}
-      </span>
+      </p>
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="h-6 shrink-0"
+        className="absolute right-3 top-1/2 h-7 -translate-y-1/2"
         onClick={() => dismiss(step)}
       >
         Anladım

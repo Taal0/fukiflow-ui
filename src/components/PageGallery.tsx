@@ -29,7 +29,7 @@ interface PageGalleryProps {
   onCloseDrawer?: () => void
   /** Letterer shows done/bubble; translator shows translated/total. */
   progressMode?: 'done' | 'translated'
-  /** Allow deleting uploaded pages (seed chapters stay protected). */
+  /** Allow deleting pages (seed and upload). */
   canDeletePages?: boolean
   onDeletePage?: (pageId: number) => void
   /** Chapter page_count while the list is still loading. */

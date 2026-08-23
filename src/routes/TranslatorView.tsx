@@ -347,7 +347,7 @@ export function TranslatorView() {
   const chapterSource =
     chapters.data?.find((c) => c.slug === chapterSlug)?.source_type ?? 'seed'
   const firstRunSource = chapterSource === 'upload' ? 'upload' : 'seed'
-  const canDeletePages = chapterSource === 'upload'
+  const canDeletePages = true
 
   useEffect(() => {
     if (!chapterSlug || !chapters.data) return

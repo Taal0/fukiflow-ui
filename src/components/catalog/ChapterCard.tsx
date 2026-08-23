@@ -23,7 +23,7 @@ export function ChapterCard({ chapter, onOpen, onDelete }: ChapterCardProps) {
   const bubbleCount = chapter.bubble_count ?? 0
   const doneCount = chapter.done_count ?? 0
   const progress = bubbleCount > 0 ? doneCount / bubbleCount : 0
-  const canDelete = chapter.source_type === 'upload' && onDelete
+  const canDelete = Boolean(onDelete)
   const relative = formatRelativeTr(chapter.created_at)
 
   return (

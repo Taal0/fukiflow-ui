@@ -210,7 +210,7 @@ export function WorkspaceView() {
     chapters.data?.find((c) => c.slug === chapterSlug)?.source_type ?? 'seed'
   const firstRunSource = chapterSource === 'upload' ? 'upload' : 'seed'
   const dismissFirstRunStep = useSession((s) => s.dismissFirstRunStep)
-  const canDeletePages = chapterSource === 'upload'
+  const canDeletePages = true
 
   useEffect(() => {
     if (!chapterSlug || !chapters.data) return
