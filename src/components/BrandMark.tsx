@@ -6,24 +6,45 @@ interface BrandMarkProps {
   size?: 'sm' | 'md' | 'lg'
 }
 
-const SIZE: Record<NonNullable<BrandMarkProps['size']>, string> = {
+const WORD: Record<NonNullable<BrandMarkProps['size']>, string> = {
   sm: 'text-base',
   md: 'text-lg',
   lg: 'text-2xl',
 }
 
-/** FukiFlow wordmark — Syne, accent ink, tight tracking. */
+const FUKI: Record<NonNullable<BrandMarkProps['size']>, string> = {
+  sm: 'text-[length:var(--text-meta)]',
+  md: 'text-[length:var(--text-ui)]',
+  lg: 'text-[length:var(--text-title)]',
+}
+
+/** FukiFlow wordmark — M PLUS 1 + 吹き whisper. */
 export function BrandMark({ className, size = 'md' }: BrandMarkProps) {
   return (
     <span
-      className={cn(
-        'shrink-0 font-extrabold leading-none tracking-[-0.04em] text-[var(--color-accent)]',
-        SIZE[size],
-        className,
-      )}
-      style={{ fontFamily: 'var(--font-display)' }}
+      role="img"
+      aria-label="FukiFlow"
+      className={cn('inline-flex shrink-0 items-baseline gap-1.5 leading-none', className)}
     >
-      FukiFlow
+      <span
+        className={cn(
+          'font-extrabold tracking-[-0.02em] text-[var(--color-accent)]',
+          WORD[size],
+        )}
+        style={{ fontFamily: 'var(--font-display)' }}
+      >
+        FukiFlow
+      </span>
+      <span
+        aria-hidden
+        className={cn(
+          'font-semibold tracking-[0.04em] text-[var(--color-ink-muted)]',
+          FUKI[size],
+        )}
+        style={{ fontFamily: 'var(--font-display)' }}
+      >
+        吹き
+      </span>
     </span>
   )
 }

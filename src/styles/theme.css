@@ -3,8 +3,8 @@
 @theme {
   /* UI chrome — dense, readable at meta/ui sizes */
   --font-sans: "Source Sans 3", "Segoe UI", sans-serif;
-  /* Wordmark / brand — graphic, slightly condensed */
-  --font-display: "Syne", "Avenir Next", sans-serif;
+  /* Wordmark / lockup — JP gothic, Latin + 吹き */
+  --font-display: "M PLUS 1", "Hiragino Sans", "Yu Gothic", sans-serif;
   --radius-sm: 0.25rem;
   --radius-md: 0.375rem;
 }

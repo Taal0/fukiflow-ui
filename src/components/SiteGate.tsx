@@ -40,7 +40,7 @@ export function SiteGate({ children }: { children: ReactNode }) {
         onSubmit={onSubmit}
         className="w-full max-w-xs rounded-lg bg-[var(--color-surface-raised)] p-5 shadow-lg ring-1 ring-[var(--color-border)]"
       >
-        <BrandMark size="lg" className="mb-3 block" />
+        <BrandMark size="lg" className="mb-3" />
         <p className="text-[length:var(--text-ui)] text-[var(--color-ink-muted)]">
           Demo erişimi için şifre
         </p>
