@@ -72,8 +72,6 @@ export function OnboardingTip({
   return (
     <div className="relative flex shrink-0 items-center justify-center border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-16 py-2.5 text-[var(--color-ink)]">
       <p className="max-w-3xl text-center text-[length:var(--text-title)] leading-snug">
-        <span className="font-semibold">{step}.</span>
-        {' '}
         {tipFor(step, source)}
       </p>
       <Button
