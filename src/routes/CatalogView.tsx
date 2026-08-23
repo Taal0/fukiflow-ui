@@ -9,6 +9,7 @@ import { ChapterGrid } from '@/components/catalog/ChapterGrid'
 import { DropZone } from '@/components/upload/DropZone'
 import { UploadDialog } from '@/components/upload/UploadDialog'
 import { ConfirmDialog } from '@/components/ui/dialog'
+import { CatalogSkeleton } from '@/components/loading/CatalogSkeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Toaster } from '@/components/ui/toaster'
 import {
@@ -58,16 +59,7 @@ export function CatalogView() {
       <CatalogHeader onUpload={() => openUpload()} />
 
       <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-4 py-6 sm:px-6">
-        {loading && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div
-                key={i}
-                className="aspect-[2/3] animate-pulse rounded-md bg-[var(--color-surface-muted)]"
-              />
-            ))}
-          </div>
-        )}
+        {loading && <CatalogSkeleton />}
 
         {error && (
           <p className="text-[length:var(--text-ui)] text-[var(--color-danger)]">

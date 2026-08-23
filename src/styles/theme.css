@@ -103,6 +103,24 @@
   }
 }
 
+@keyframes ff-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes ff-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
 @keyframes ff-dialog-in {
   from {
     opacity: 0;

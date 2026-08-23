@@ -65,6 +65,7 @@ interface PageCanvasProps {
   fonts: FontInfo[]
   /** Translator: region tool + order badges; letterer: read-only region outlines. */
   mode?: CanvasMode
+  onReadyChange?: (ready: boolean) => void
 }
 
 type DragMode =
@@ -87,6 +88,7 @@ export function PageCanvas({
   detail,
   fonts,
   mode = 'letterer',
+  onReadyChange,
 }: PageCanvasProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -212,6 +214,10 @@ export function PageCanvas({
     selectedRegionId != null
       ? regions.find((r) => r.id === selectedRegionId)
       : undefined
+
+  useEffect(() => {
+    onReadyChange?.(ready || loadError != null)
+  }, [ready, loadError, onReadyChange])
 
   const storedFrame = useMemo(() => {
     if (!selectedBubble) return null
@@ -1275,11 +1281,7 @@ export function PageCanvas({
           </span>
         </div>
       )}
-      {!ready && !loadError && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-[var(--color-ink-muted)]">
-          Sayfa yükleniyor…
-        </div>
-      )}
+      {/* First-paint placeholder lives in the workspace parent so chrome stays put. */}
       {loadError && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-[var(--color-danger)]">
           {loadError}

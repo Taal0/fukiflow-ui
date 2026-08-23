@@ -25,11 +25,15 @@ import {
 import { PageGallery } from '@/components/PageGallery'
 import { ShortcutsHelp } from '@/components/ShortcutsHelp'
 import { Toolbar } from '@/components/Toolbar'
+import { CanvasPlaceholder } from '@/components/loading/CanvasPlaceholder'
+import { PanelPlaceholder } from '@/components/loading/PanelPlaceholder'
 import { EmptyState } from '@/components/ui/empty-state'
+import { IndeterminateBar } from '@/components/ui/indeterminate-bar'
 import { Toaster } from '@/components/ui/toaster'
 import { StatusBar } from '@/components/layout/StatusBar'
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell'
 import { useAutosave } from '@/hooks/useAutosave'
+import { useDelayedFlag } from '@/hooks/useDelayedFlag'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
 import { useHeldPageDetail } from '@/hooks/useHeldPageDetail'
 import { useHydratePageEdit } from '@/hooks/useHydratePageEdit'
@@ -101,6 +105,7 @@ export function WorkspaceView() {
   const deleteEdit = useDeletePageEditMutation()
   const deletePage = useDeletePageMutation()
   const [guideOpen, setGuideOpen] = useState(false)
+  const [canvasReady, setCanvasReady] = useState(false)
 
   const isTablet = useMediaQuery('(max-width: 1023px)')
   const isDesktop = useMediaQuery('(min-width: 1024px)')
@@ -372,6 +377,37 @@ export function WorkspaceView() {
   const canUndo = Boolean(pageSession?.undoPast.length)
   const canRedo = Boolean(pageSession?.undoFuture.length)
 
+  const previewPage =
+    pagesQ.data?.find((p) => p.id === selectedPageId) ?? pagesQ.data?.[0]
+  const previewUrl = previewPage?.thumb_url ?? null
+  const previewAspect =
+    previewPage && previewPage.height > 0
+      ? previewPage.width / previewPage.height
+      : 2 / 3
+  const pageCountHint = chapters.data?.find(
+    (c) => c.slug === chapterSlug,
+  )?.page_count
+
+  const switching = Boolean(held?.isTransitioning)
+  const opening =
+    Boolean(!pageQ.error) &&
+    ((pageQ.isLoading && !workingDetail) ||
+      Boolean(workingDetail && !canvasReady && !switching))
+  const showLoadChrome = useDelayedFlag(opening || switching, 150)
+  const showSlowHint = useDelayedFlag(opening || switching, 1200)
+  const loadingMessage =
+    opening || switching
+      ? showLoadChrome
+        ? showSlowHint
+          ? 'Büyük sayfa, biraz sürer'
+          : 'Sayfa açılıyor'
+        : null
+      : null
+
+  useEffect(() => {
+    if (!workingDetail) setCanvasReady(false)
+  }, [workingDetail])
+
   const galleryNode = (
     <>
       {isDesktop && (
@@ -385,6 +421,7 @@ export function WorkspaceView() {
             width={galleryResize.width}
             canDeletePages={canDeletePages}
             onDeletePage={handleDeletePage}
+            pageCountHint={pageCountHint}
           />
           <div
             {...galleryResize.handleProps}
@@ -405,6 +442,7 @@ export function WorkspaceView() {
           onCloseDrawer={() => patchUi({ galleryDrawerOpen: false })}
           canDeletePages={canDeletePages}
           onDeletePage={handleDeletePage}
+          pageCountHint={pageCountHint}
         />
       )}
     </>
@@ -483,10 +521,13 @@ export function WorkspaceView() {
       />
     </div>
   ) : (
-    <aside
-      style={{ width: panelResize.width }}
-      className="shrink-0 border-l border-[var(--color-border)] bg-[var(--color-surface)]"
-    />
+    <div className="relative flex h-full shrink-0">
+      <div
+        {...panelResize.handleProps}
+        className="absolute left-0 top-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]"
+      />
+      <PanelPlaceholder width={panelResize.width} title="Balonlar" />
+    </div>
   )
 
   return (
@@ -560,7 +601,7 @@ export function WorkspaceView() {
           )
         }
         gallery={galleryNode}
-        rail={workingDetail ? <ToolRail /> : null}
+        rail={<ToolRail />}
         canvas={
           <>
             {workingDetail && (
@@ -572,7 +613,10 @@ export function WorkspaceView() {
                 }}
               />
             )}
-            <main className="relative min-h-0 flex-1">
+            <main
+              className="relative min-h-0 flex-1"
+              aria-busy={opening || switching}
+            >
               {pageQ.error && !workingDetail && (
                 <EmptyState
                   title="Sayfa açılamadı"
@@ -588,23 +632,29 @@ export function WorkspaceView() {
                   <PageCanvas
                     detail={workingDetail}
                     fonts={fontsQ.data ?? []}
+                    onReadyChange={setCanvasReady}
                   />
                   <ZoomControls />
                 </>
               )}
-              {!pageQ.isPending && !pageQ.error && !workingDetail && (
-                <EmptyState
-                  title="Sayfa seçilmedi"
-                  description="Soldan bir sayfa seçerek düzenlemeye başlayın."
+              {!pageQ.isLoading &&
+                !pageQ.error &&
+                !workingDetail &&
+                !opening && (
+                  <EmptyState
+                    title="Sayfa seçilmedi"
+                    description="Soldan bir sayfa seçerek düzenlemeye başlayın."
+                  />
+                )}
+              {opening && (
+                <CanvasPlaceholder
+                  previewUrl={previewUrl}
+                  aspect={previewAspect}
+                  showBar={showLoadChrome}
                 />
               )}
-              {(held?.isTransitioning || pageQ.isFetching) && workingDetail && (
-                <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-[var(--color-surface-raised)]/90 px-2 py-1 text-[length:var(--text-meta)] text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
-                  Sayfa yükleniyor…
-                </div>
-              )}
-              {pageQ.isPending && !workingDetail && (
-                <EmptyState title="Sayfa yükleniyor…" />
+              {switching && showLoadChrome && (
+                <IndeterminateBar className="absolute inset-x-0 top-0 z-20" />
               )}
             </main>
           </>
@@ -619,6 +669,7 @@ export function WorkspaceView() {
             selectedLabel={selectedLabel}
             typesetPending={typesetPending}
             pageProgress={pageProgress}
+            loadingMessage={loadingMessage}
           />
         }
       />

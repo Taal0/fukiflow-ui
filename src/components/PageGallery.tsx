@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Skeleton } from '@/components/ui/skeleton'
 import { statusLabel } from '@/components/flags'
 import { useSession } from '@/store/session'
 import { cn } from '@/lib/utils'
@@ -31,6 +32,8 @@ interface PageGalleryProps {
   /** Allow deleting uploaded pages (seed chapters stay protected). */
   canDeletePages?: boolean
   onDeletePage?: (pageId: number) => void
+  /** Chapter page_count while the list is still loading. */
+  pageCountHint?: number
 }
 
 export function PageGallery({
@@ -46,6 +49,7 @@ export function PageGallery({
   progressMode = 'done',
   canDeletePages,
   onDeletePage,
+  pageCountHint,
 }: PageGalleryProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const thumbSize = useSession((s) => s.ui.thumbSize)
@@ -95,7 +99,9 @@ export function PageGallery({
               ? progressMode === 'translated'
                 ? `${pages.length} sayfa · J/K`
                 : `${pages.length} sayfa`
-              : '—'}
+              : pageCountHint
+                ? `${pageCountHint} sayfa`
+                : '—'}
           </p>
         </div>
         <div className="flex gap-0.5" role="group" aria-label="Görünüm">
@@ -130,14 +136,21 @@ export function PageGallery({
         className="flex-1 overflow-y-auto p-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus)]"
       >
         {loading && (
-          <ul className="flex flex-col gap-1">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <li
-                key={i}
-                className="animate-pulse rounded-md bg-[var(--color-surface-muted)]"
-                style={{ height: thumbSize === 'lg' ? 140 : 36 }}
-              />
-            ))}
+          <ul className="flex flex-col gap-1" aria-busy aria-label="Sayfalar yükleniyor">
+            {Array.from({ length: 8 }).map((_, i) =>
+              thumbSize === 'lg' ? (
+                <li key={i} className="flex flex-col gap-1 rounded-md p-1.5">
+                  <Skeleton className="aspect-[3/4] w-full rounded" />
+                  <Skeleton className="h-2.5 w-3/4" />
+                </li>
+              ) : (
+                <li key={i} className="flex h-9 items-center gap-2 px-1.5">
+                  <Skeleton className="h-7 w-5 shrink-0 rounded-sm" />
+                  <Skeleton className="h-2.5 flex-1" />
+                  <Skeleton className="h-1 w-8 rounded-full" />
+                </li>
+              ),
+            )}
           </ul>
         )}
         {error && (

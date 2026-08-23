@@ -21,12 +21,16 @@ import { BrandMark } from '@/components/BrandMark'
 import { RoleSwitch } from '@/components/RoleSwitch'
 import { ViewToggle } from '@/components/ViewToggle'
 import { Button } from '@/components/ui/button'
+import { CanvasPlaceholder } from '@/components/loading/CanvasPlaceholder'
+import { PanelPlaceholder } from '@/components/loading/PanelPlaceholder'
 import { EmptyState } from '@/components/ui/empty-state'
+import { IndeterminateBar } from '@/components/ui/indeterminate-bar'
 import { Toaster } from '@/components/ui/toaster'
 import { StatusBar } from '@/components/layout/StatusBar'
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell'
 import { TranslatorPanel } from '@/components/translator/TranslatorPanel'
 import { useAutosave } from '@/hooks/useAutosave'
+import { useDelayedFlag } from '@/hooks/useDelayedFlag'
 import { useDebouncedTypeset } from '@/hooks/useDebouncedTypeset'
 import { useDebouncedVerify } from '@/hooks/useDebouncedVerify'
 import { useHeldPageDetail } from '@/hooks/useHeldPageDetail'
@@ -83,6 +87,7 @@ export function TranslatorView() {
   const setActiveTool = useSession((s) => s.setActiveTool)
   const pagesMap = useSession((s) => s.pages)
   const deletePage = useDeletePageMutation()
+  const [canvasReady, setCanvasReady] = useState(false)
 
   const isTablet = useMediaQuery('(max-width: 1023px)')
   const isDesktop = useMediaQuery('(min-width: 1024px)')
@@ -219,6 +224,37 @@ export function TranslatorView() {
     return { ...held.detail, doc: working }
   }, [held, pageSession])
 
+  const previewPage =
+    pages.find((p) => p.id === selectedPageId) ?? pages[0]
+  const previewUrl = previewPage?.thumb_url ?? null
+  const previewAspect =
+    previewPage && previewPage.height > 0
+      ? previewPage.width / previewPage.height
+      : 2 / 3
+  const pageCountHint = chapters.data?.find(
+    (c) => c.slug === chapterSlug,
+  )?.page_count
+
+  const switching = Boolean(held?.isTransitioning)
+  const opening =
+    Boolean(!pageQuery.error) &&
+    ((pageQuery.isLoading && !workingDetail) ||
+      Boolean(workingDetail && !canvasReady && !switching))
+  const showLoadChrome = useDelayedFlag(opening || switching, 150)
+  const showSlowHint = useDelayedFlag(opening || switching, 1200)
+  const loadingMessage =
+    opening || switching
+      ? showLoadChrome
+        ? showSlowHint
+          ? 'Büyük sayfa, biraz sürer'
+          : 'Sayfa açılıyor'
+        : null
+      : null
+
+  useEffect(() => {
+    if (!workingDetail) setCanvasReady(false)
+  }, [workingDetail])
+
   const galleryPages = useMemo(() => {
     return pages.map((p) => {
       const session = pagesMap[p.id]
@@ -346,6 +382,7 @@ export function TranslatorView() {
             progressMode="translated"
             canDeletePages={canDeletePages}
             onDeletePage={handleDeletePage}
+            pageCountHint={pageCountHint}
           />
           <div
             {...galleryResize.handleProps}
@@ -371,6 +408,7 @@ export function TranslatorView() {
           progressMode="translated"
           canDeletePages={canDeletePages}
           onDeletePage={handleDeletePage}
+          pageCountHint={pageCountHint}
         />
       )}
     </>
@@ -454,28 +492,35 @@ export function TranslatorView() {
         gallery={galleryNode}
         rail={<ToolRail tools={['select', 'region']} />}
         canvas={
-          <div className="relative min-h-0 flex-1">
+          <div
+            className="relative min-h-0 flex-1"
+            aria-busy={opening || switching}
+          >
             {workingDetail ? (
               <>
                 <PageCanvas
                   detail={workingDetail}
                   fonts={fonts}
                   mode="translator"
+                  onReadyChange={setCanvasReady}
                 />
                 <ZoomControls />
-                {(held?.isTransitioning || pageQuery.isFetching) && (
-                  <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-[var(--color-surface-raised)]/90 px-2 py-1 text-[length:var(--text-meta)] text-[var(--color-ink-muted)] shadow-sm ring-1 ring-[var(--color-border)]">
-                    Sayfa yükleniyor…
-                  </div>
-                )}
               </>
-            ) : pageQuery.isLoading ? (
-              <EmptyState title="Sayfa yükleniyor…" />
-            ) : (
+            ) : !pageQuery.isLoading && !opening ? (
               <EmptyState
                 title="Sayfa seçilmedi"
                 description="Soldan bir sayfa seçin"
               />
+            ) : null}
+            {opening && (
+              <CanvasPlaceholder
+                previewUrl={previewUrl}
+                aspect={previewAspect}
+                showBar={showLoadChrome}
+              />
+            )}
+            {switching && showLoadChrome && (
+              <IndeterminateBar className="absolute inset-x-0 top-0 z-20" />
             )}
           </div>
         }
@@ -511,9 +556,9 @@ export function TranslatorView() {
                 }}
               />
             ) : (
-              <div
-                style={{ width: panelResize.width }}
-                className="h-full border-l border-[var(--color-border)]"
+              <PanelPlaceholder
+                width={panelResize.width}
+                title="Çeviri sırası"
               />
             )}
           </div>
@@ -528,6 +573,7 @@ export function TranslatorView() {
             typesetPending={typesetPending}
             hideTypeset
             pageProgress={pageProgress || null}
+            loadingMessage={loadingMessage}
           />
         }
       />

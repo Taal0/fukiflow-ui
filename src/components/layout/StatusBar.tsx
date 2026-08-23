@@ -11,6 +11,8 @@ interface StatusBarProps {
   /** Hide the typeset status segment (translator view). */
   hideTypeset?: boolean
   pageProgress?: string | null
+  /** Replaces the selection label while a page is opening. */
+  loadingMessage?: string | null
 }
 
 function saveDotClass(status: SaveStatus | undefined, dirty?: boolean) {
@@ -42,6 +44,7 @@ export function StatusBar({
   typesetPending,
   hideTypeset,
   pageProgress,
+  loadingMessage,
 }: StatusBarProps) {
   return (
     <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 text-[length:var(--text-meta)] text-[var(--color-ink-muted)]">
@@ -70,7 +73,9 @@ export function StatusBar({
       <span className="text-[var(--color-border)]" aria-hidden>
         |
       </span>
-      <span className="truncate">{selectedLabel ?? 'Öğe seçilmedi'}</span>
+      <span className="truncate" aria-live="polite">
+        {loadingMessage ?? selectedLabel ?? 'Öğe seçilmedi'}
+      </span>
       {!hideTypeset && (
         <>
           <span className="text-[var(--color-border)]" aria-hidden>
