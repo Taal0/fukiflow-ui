@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { LayoutGrid, List, MoreHorizontal, Trash2 } from 'lucide-react'
+import { LayoutGrid, List, MoreHorizontal, RefreshCw, Trash2 } from 'lucide-react'
 import type { PageSummary } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,7 @@ interface PageGalleryProps {
   /** Allow deleting pages (seed and upload). */
   canDeletePages?: boolean
   onDeletePage?: (pageId: number) => void
+  onReprocessPage?: (pageId: number) => void
   /** Chapter page_count while the list is still loading. */
   pageCountHint?: number
 }
@@ -49,6 +50,7 @@ export function PageGallery({
   progressMode = 'done',
   canDeletePages,
   onDeletePage,
+  onReprocessPage,
   pageCountHint,
 }: PageGalleryProps) {
   const listRef = useRef<HTMLDivElement>(null)
@@ -192,6 +194,10 @@ export function PageGallery({
                 ? `${page.translated_count ?? 0}/${page.bubble_count} çevrildi`
                 : `${page.done_count ?? 0}/${page.bubble_count}`
             const label = page.stem || `Sayfa ${page.page_no}`
+            const status = page.processing_status ?? 'ready'
+            const canRetry = status === 'error' && Boolean(onReprocessPage)
+            const showMenu =
+              Boolean(canDeletePages && onDeletePage) || canRetry
 
             if (thumbSize === 'sm') {
               return (
@@ -227,6 +233,23 @@ export function PageGallery({
                     <span className="min-w-0 flex-1 truncate text-[length:var(--text-ui)] text-[var(--color-ink)]">
                       {label}
                     </span>
+                    {status !== 'ready' && (
+                      <Badge
+                        variant="warn"
+                        className={cn(
+                          'shrink-0 normal-case tracking-normal',
+                          status === 'error' &&
+                            'text-[var(--color-danger)]',
+                        )}
+                        title={
+                          status === 'error'
+                            ? (page.error_message ?? undefined)
+                            : undefined
+                        }
+                      >
+                        {status === 'error' ? 'Hata' : 'İşleniyor'}
+                      </Badge>
+                    )}
                     {(page.flag_count ?? 0) > 0 && (
                       <span
                         className="shrink-0 rounded px-1 py-0.5 text-[length:var(--text-meta)] font-semibold tabular-nums text-[#c2410c]"
@@ -247,7 +270,7 @@ export function PageGallery({
                       </span>
                     )}
                   </button>
-                  {canDeletePages && onDeletePage && (
+                  {showMenu && (
                     <div className="absolute right-0.5 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -263,16 +286,29 @@ export function PageGallery({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            danger
-                            onSelect={() => setPendingDelete(page)}
-                          >
-                            <Trash2
-                              className="h-3.5 w-3.5 shrink-0 opacity-70"
-                              aria-hidden
-                            />
-                            Sayfayı Sil
-                          </DropdownMenuItem>
+                          {canRetry && (
+                            <DropdownMenuItem
+                              onSelect={() => onReprocessPage?.(page.id)}
+                            >
+                              <RefreshCw
+                                className="h-3.5 w-3.5 shrink-0 opacity-70"
+                                aria-hidden
+                              />
+                              Tekrar dene
+                            </DropdownMenuItem>
+                          )}
+                          {canDeletePages && onDeletePage && (
+                            <DropdownMenuItem
+                              danger
+                              onSelect={() => setPendingDelete(page)}
+                            >
+                              <Trash2
+                                className="h-3.5 w-3.5 shrink-0 opacity-70"
+                                aria-hidden
+                              />
+                              Sayfayı Sil
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -321,7 +357,24 @@ export function PageGallery({
                         {page.flag_count}
                       </span>
                     )}
-                    {canDeletePages && onDeletePage && (
+                    {status !== 'ready' && (
+                      <Badge
+                        variant="warn"
+                        className={cn(
+                          'absolute bottom-1 right-1 normal-case tracking-normal',
+                          status === 'error' &&
+                            'text-[var(--color-danger)]',
+                        )}
+                        title={
+                          status === 'error'
+                            ? (page.error_message ?? undefined)
+                            : undefined
+                        }
+                      >
+                        {status === 'error' ? 'Hata' : 'İşleniyor'}
+                      </Badge>
+                    )}
+                    {showMenu && (
                       <div className="absolute right-1 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -337,16 +390,29 @@ export function PageGallery({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              danger
-                              onSelect={() => setPendingDelete(page)}
-                            >
-                              <Trash2
-                                className="h-3.5 w-3.5 shrink-0 opacity-70"
-                                aria-hidden
-                              />
-                              Sayfayı Sil
-                            </DropdownMenuItem>
+                            {canRetry && (
+                              <DropdownMenuItem
+                                onSelect={() => onReprocessPage?.(page.id)}
+                              >
+                                <RefreshCw
+                                  className="h-3.5 w-3.5 shrink-0 opacity-70"
+                                  aria-hidden
+                                />
+                                Tekrar dene
+                              </DropdownMenuItem>
+                            )}
+                            {canDeletePages && onDeletePage && (
+                              <DropdownMenuItem
+                                danger
+                                onSelect={() => setPendingDelete(page)}
+                              >
+                                <Trash2
+                                  className="h-3.5 w-3.5 shrink-0 opacity-70"
+                                  aria-hidden
+                                />
+                                Sayfayı Sil
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>

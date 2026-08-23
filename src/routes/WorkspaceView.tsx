@@ -9,6 +9,7 @@ import {
   useFonts,
   usePage,
   usePrefetchNeighborPages,
+  useReprocessPageMutation,
 } from '@/api/queries'
 import { textLayerId } from '@/api/types'
 import { PageCanvas } from '@/canvas/PageCanvas'
@@ -26,6 +27,7 @@ import { PageGallery } from '@/components/PageGallery'
 import { ShortcutsHelp } from '@/components/ShortcutsHelp'
 import { Toolbar } from '@/components/Toolbar'
 import { CanvasPlaceholder } from '@/components/loading/CanvasPlaceholder'
+import { PageStatusPlaceholder } from '@/components/loading/PageStatusPlaceholder'
 import { PanelPlaceholder } from '@/components/loading/PanelPlaceholder'
 import { EmptyState } from '@/components/ui/empty-state'
 import { IndeterminateBar } from '@/components/ui/indeterminate-bar'
@@ -104,6 +106,7 @@ export function WorkspaceView() {
   const patchUi = useSession((s) => s.patchUi)
   const deleteEdit = useDeletePageEditMutation()
   const deletePage = useDeletePageMutation()
+  const reprocess = useReprocessPageMutation()
   const [guideOpen, setGuideOpen] = useState(false)
   const [canvasReady, setCanvasReady] = useState(false)
 
@@ -168,7 +171,10 @@ export function WorkspaceView() {
       selectedPageId != null &&
       pagesQ.data.some((p) => p.id === selectedPageId)
     if (valid) return
-    selectPage(pagesQ.data[0]!.id)
+    const firstReady =
+      pagesQ.data.find((p) => (p.processing_status ?? 'ready') === 'ready') ??
+      pagesQ.data[0]!
+    selectPage(firstReady.id)
   }, [pagesQ.data, selectedPageId, selectPage])
 
   // Unknown slug → back to catalog.
@@ -235,6 +241,17 @@ export function WorkspaceView() {
       },
       onError: (e) => {
         toast(e instanceof ApiError ? e.message : 'Sayfa silinemedi', 'danger')
+      },
+    })
+  }
+
+  const handleReprocessPage = (pageId: number) => {
+    reprocess.mutate(pageId, {
+      onError: (e) => {
+        toast(
+          e instanceof ApiError ? e.message : 'Sayfa yeniden işlenemedi',
+          'danger',
+        )
       },
     })
   }
@@ -396,9 +413,18 @@ export function WorkspaceView() {
     (c) => c.slug === chapterSlug,
   )?.page_count
 
+  const selectedSummary = (pagesQ.data ?? []).find(
+    (p) => p.id === selectedPageId,
+  )
+  const pageStatus = selectedSummary?.processing_status ?? 'ready'
+  const notReady =
+    pageStatus !== 'ready' ||
+    (pageQ.error instanceof ApiError && pageQ.error.status === 409)
+
   const switching = Boolean(held?.isTransitioning)
   const opening =
     Boolean(!pageQ.error) &&
+    !notReady &&
     ((pageQ.isLoading && !workingDetail) ||
       Boolean(workingDetail && !canvasReady && !switching))
   const showLoadChrome = useDelayedFlag(opening || switching, 150)
@@ -429,6 +455,7 @@ export function WorkspaceView() {
             width={galleryResize.width}
             canDeletePages={canDeletePages}
             onDeletePage={handleDeletePage}
+            onReprocessPage={handleReprocessPage}
             pageCountHint={pageCountHint}
           />
           <div
@@ -450,6 +477,7 @@ export function WorkspaceView() {
           onCloseDrawer={() => patchUi({ galleryDrawerOpen: false })}
           canDeletePages={canDeletePages}
           onDeletePage={handleDeletePage}
+          onReprocessPage={handleReprocessPage}
           pageCountHint={pageCountHint}
         />
       )}
@@ -625,7 +653,29 @@ export function WorkspaceView() {
               className="relative min-h-0 flex-1"
               aria-busy={opening || switching}
             >
-              {pageQ.error && !workingDetail && (
+              {notReady && !workingDetail && (
+                <PageStatusPlaceholder
+                  status={
+                    pageStatus !== 'ready' ? pageStatus : 'processing'
+                  }
+                  errorMessage={
+                    selectedSummary?.error_message ??
+                    (pageQ.error instanceof ApiError
+                      ? pageQ.error.message
+                      : null)
+                  }
+                  onRetry={
+                    pageStatus === 'error' && selectedPageId != null
+                      ? () => handleReprocessPage(selectedPageId)
+                      : undefined
+                  }
+                  retrying={
+                    reprocess.isPending &&
+                    reprocess.variables === selectedPageId
+                  }
+                />
+              )}
+              {pageQ.error && !workingDetail && !notReady && (
                 <EmptyState
                   title="Sayfa açılamadı"
                   description={
@@ -648,7 +698,8 @@ export function WorkspaceView() {
               {!pageQ.isLoading &&
                 !pageQ.error &&
                 !workingDetail &&
-                !opening && (
+                !opening &&
+                !notReady && (
                   <EmptyState
                     title="Sayfa seçilmedi"
                     description="Soldan bir sayfa seçerek düzenlemeye başlayın."

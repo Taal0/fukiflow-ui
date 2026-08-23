@@ -8,6 +8,7 @@ interface EmptyStateProps {
   description?: string
   actionLabel?: string
   onAction?: () => void
+  actionDisabled?: boolean
   className?: string
 }
 
@@ -17,6 +18,7 @@ export function EmptyState({
   description,
   actionLabel,
   onAction,
+  actionDisabled,
   className,
 }: EmptyStateProps) {
   return (
@@ -40,7 +42,13 @@ export function EmptyState({
         </p>
       )}
       {actionLabel && onAction && (
-        <Button type="button" size="sm" className="mt-2" onClick={onAction}>
+        <Button
+          type="button"
+          size="sm"
+          className="mt-2"
+          onClick={onAction}
+          disabled={actionDisabled}
+        >
           {actionLabel}
         </Button>
       )}

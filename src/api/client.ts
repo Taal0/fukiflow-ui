@@ -263,6 +263,12 @@ export const api = {
       slug: string
     }>(`/api/pages/${pageId}`, { method: 'DELETE' }),
 
+  reprocessPage: (pageId: number) =>
+    request<{ ok: boolean; page_id: number; processing_status: string }>(
+      `/api/pages/${pageId}/reprocess`,
+      { method: 'POST' },
+    ),
+
   verifyRegions: (
     pageId: number,
     init?: { signal?: AbortSignal },

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { api, type TypesetBody, type TypesetResult } from './client'
+import { api, ApiError, type TypesetBody, type TypesetResult } from './client'
 import {
   applyPageEditToCache,
   clearPageEditInCache,
@@ -61,6 +61,12 @@ export function usePage(pageId: number | null | undefined) {
     staleTime: PAGE_STALE,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        return false
+      }
+      return failureCount < 3
+    },
   })
 
   const data: PageDetail | undefined =
@@ -85,6 +91,16 @@ export function usePrefetchNeighborPages(
         queryKey: pageQueryKey(id),
         queryFn: () => api.page(id),
         staleTime: PAGE_STALE,
+        retry: (failureCount, error) => {
+          if (
+            error instanceof ApiError &&
+            error.status >= 400 &&
+            error.status < 500
+          ) {
+            return false
+          }
+          return failureCount < 3
+        },
       })
     }
   }, [qc, selectedPageId, pageIds])
@@ -176,6 +192,18 @@ export function useDeletePageMutation() {
       if (data.chapter_deleted) {
         void qc.removeQueries({ queryKey: ['chapters', data.slug] })
       }
+    },
+  })
+}
+
+export function useReprocessPageMutation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (pageId: number) => api.reprocessPage(pageId),
+    onSuccess: (_data, pageId) => {
+      // 'chapters' prefix'i chapters listesi + tüm pages/progress sorgularını kapsar.
+      void qc.invalidateQueries({ queryKey: ['chapters'] })
+      void qc.invalidateQueries({ queryKey: pageQueryKey(pageId) })
     },
   })
 }

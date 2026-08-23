@@ -9,6 +9,7 @@ import {
   useFonts,
   usePage,
   usePrefetchNeighborPages,
+  useReprocessPageMutation,
 } from '@/api/queries'
 import { PageCanvas } from '@/canvas/PageCanvas'
 import { ToolRail } from '@/components/canvas/ToolRail'
@@ -26,6 +27,7 @@ import { RoleSwitch } from '@/components/RoleSwitch'
 import { ViewToggle } from '@/components/ViewToggle'
 import { Button } from '@/components/ui/button'
 import { CanvasPlaceholder } from '@/components/loading/CanvasPlaceholder'
+import { PageStatusPlaceholder } from '@/components/loading/PageStatusPlaceholder'
 import { PanelPlaceholder } from '@/components/loading/PanelPlaceholder'
 import { EmptyState } from '@/components/ui/empty-state'
 import { IndeterminateBar } from '@/components/ui/indeterminate-bar'
@@ -91,6 +93,7 @@ export function TranslatorView() {
   const setActiveTool = useSession((s) => s.setActiveTool)
   const pagesMap = useSession((s) => s.pages)
   const deletePage = useDeletePageMutation()
+  const reprocess = useReprocessPageMutation()
   const [canvasReady, setCanvasReady] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
   const dismissFirstRunStep = useSession((s) => s.dismissFirstRunStep)
@@ -180,10 +183,13 @@ export function TranslatorView() {
       }
     }
 
-    // No / invalid page in URL — land on current store page or first.
+    // No / invalid page in URL — land on current store page or first ready.
+    const firstReady =
+      pages.find((p) => (p.processing_status ?? 'ready') === 'ready') ??
+      pages[0]!
     const cur = useSession.getState().selectedPageId
     const fallback =
-      cur != null && pages.some((p) => p.id === cur) ? cur : pages[0]!.id
+      cur != null && pages.some((p) => p.id === cur) ? cur : firstReady.id
     selectPage(fallback)
     navigate(`/translate/${chapterSlug}/${fallback}`, { replace: true })
   }, [pages, chapterSlug, routePageId, selectPage, navigate])
@@ -241,9 +247,16 @@ export function TranslatorView() {
     (c) => c.slug === chapterSlug,
   )?.page_count
 
+  const selectedSummary = pages.find((p) => p.id === selectedPageId)
+  const pageStatus = selectedSummary?.processing_status ?? 'ready'
+  const notReady =
+    pageStatus !== 'ready' ||
+    (pageQuery.error instanceof ApiError && pageQuery.error.status === 409)
+
   const switching = Boolean(held?.isTransitioning)
   const opening =
     Boolean(!pageQuery.error) &&
+    !notReady &&
     ((pageQuery.isLoading && !workingDetail) ||
       Boolean(workingDetail && !canvasReady && !switching))
   const showLoadChrome = useDelayedFlag(opening || switching, 150)
@@ -377,6 +390,17 @@ export function TranslatorView() {
     })
   }
 
+  const handleReprocessPage = (pageId: number) => {
+    reprocess.mutate(pageId, {
+      onError: (e) => {
+        toast(
+          e instanceof ApiError ? e.message : 'Sayfa yeniden işlenemedi',
+          'danger',
+        )
+      },
+    })
+  }
+
   const galleryNode = (
     <>
       {isDesktop && (
@@ -395,6 +419,7 @@ export function TranslatorView() {
             progressMode="translated"
             canDeletePages={canDeletePages}
             onDeletePage={handleDeletePage}
+            onReprocessPage={handleReprocessPage}
             pageCountHint={pageCountHint}
           />
           <div
@@ -421,6 +446,7 @@ export function TranslatorView() {
           progressMode="translated"
           canDeletePages={canDeletePages}
           onDeletePage={handleDeletePage}
+          onReprocessPage={handleReprocessPage}
           pageCountHint={pageCountHint}
         />
       )}
@@ -531,6 +557,36 @@ export function TranslatorView() {
                 />
                 <ZoomControls />
               </>
+            ) : notReady ? (
+              <PageStatusPlaceholder
+                status={
+                  pageStatus !== 'ready' ? pageStatus : 'processing'
+                }
+                errorMessage={
+                  selectedSummary?.error_message ??
+                  (pageQuery.error instanceof ApiError
+                    ? pageQuery.error.message
+                    : null)
+                }
+                onRetry={
+                  pageStatus === 'error' && selectedPageId != null
+                    ? () => handleReprocessPage(selectedPageId)
+                    : undefined
+                }
+                retrying={
+                  reprocess.isPending &&
+                  reprocess.variables === selectedPageId
+                }
+              />
+            ) : pageQuery.error && !opening ? (
+              <EmptyState
+                title="Sayfa açılamadı"
+                description={
+                  pageQuery.error instanceof ApiError
+                    ? pageQuery.error.message
+                    : 'Sayfa yüklenirken bir hata oluştu.'
+                }
+              />
             ) : !pageQuery.isLoading && !opening ? (
               <EmptyState
                 title="Sayfa seçilmedi"
