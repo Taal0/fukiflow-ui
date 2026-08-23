@@ -585,7 +585,7 @@ export function WorkspaceView() {
             }}
           />
         }
-        tip={<OnboardingTip />}
+        tip={<OnboardingTip step={4} />}
         banner={
           (fontsUnavailable || catalogError) && (
             <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-[length:var(--text-ui)] text-[var(--color-ink)]">

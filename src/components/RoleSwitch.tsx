@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { Segmented } from '@/components/ui/segmented'
+import { Tooltip, TooltipProvider } from '@/components/ui/tooltip'
 import {
   type WorkspaceRole,
   useSession,
@@ -28,21 +29,29 @@ export function RoleSwitch({
   const setWorkspaceRole = useSession((s) => s.setWorkspaceRole)
 
   return (
-    <Segmented
-      ariaLabel="Rol"
-      value={value}
-      size={size}
-      className={className}
-      onChange={(role) => {
-        setWorkspaceRole(role)
-        if (!chapterSlug) return
-        navigate(
-          role === 'translator'
-            ? `/translate/${chapterSlug}`
-            : `/edit/${chapterSlug}`,
-        )
-      }}
-      options={ROLE_OPTIONS}
-    />
+    <TooltipProvider delayDuration={350}>
+      <Tooltip
+        side="bottom"
+        label="Çevirmen: kutu çiz + Türkçe yaz. Letterer: temizle + dizgi düzelt."
+      >
+        <span className={className}>
+          <Segmented
+            ariaLabel="Rol"
+            value={value}
+            size={size}
+            onChange={(role) => {
+              setWorkspaceRole(role)
+              if (!chapterSlug) return
+              navigate(
+                role === 'translator'
+                  ? `/translate/${chapterSlug}`
+                  : `/edit/${chapterSlug}`,
+              )
+            }}
+            options={ROLE_OPTIONS}
+          />
+        </span>
+      </Tooltip>
+    </TooltipProvider>
   )
 }

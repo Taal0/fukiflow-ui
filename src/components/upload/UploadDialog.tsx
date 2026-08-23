@@ -12,7 +12,11 @@ import { Button } from '@/components/ui/button'
 import { DropZone } from './DropZone'
 import { UploadProgress } from './UploadProgress'
 import { useUpload } from './useUpload'
-import { useSession } from '@/store/session'
+import { FIRST_RUN_STEPS } from '@/components/OnboardingGuide'
+import {
+  isFirstRunPending,
+  useSession,
+} from '@/store/session'
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 const MAX_TOTAL_BYTES = 150 * 1024 * 1024
@@ -52,11 +56,19 @@ export function UploadDialog({
 }: UploadDialogProps) {
   const navigate = useNavigate()
   const workspaceRole = useSession((s) => s.ui.workspaceRole)
+  const uploadTipPending = useSession((s) =>
+    isFirstRunPending(s.firstRunDone, 2),
+  )
+  const dismissFirstRunStep = useSession((s) => s.dismissFirstRunStep)
   const { state, start, cancel, reset } = useUpload()
   const [files, setFiles] = useState<File[]>([])
   const [title, setTitle] = useState('')
   const [validationError, setValidationError] = useState<string | null>(null)
   const [confirmClose, setConfirmClose] = useState(false)
+
+  useEffect(() => {
+    if (state.status === 'complete') dismissFirstRunStep(2)
+  }, [state.status, dismissFirstRunStep])
 
   const busy =
     state.status === 'uploading' || state.status === 'processing'
@@ -125,6 +137,7 @@ export function UploadDialog({
   const goToEditor = () => {
     const slug = state.result?.slug
     if (!slug) return
+    dismissFirstRunStep(2)
     onOpenChange(false)
     reset()
     setFiles([])
@@ -170,6 +183,11 @@ export function UploadDialog({
 
           {stage === 'select' && (
             <div className="mt-4 flex flex-col gap-4">
+              {uploadTipPending && (
+                <p className="text-[length:var(--text-ui)] text-[var(--color-ink-muted)]">
+                  {FIRST_RUN_STEPS[1]!.tip}
+                </p>
+              )}
               <DropZone
                 onFiles={applyFiles}
                 autoFocus

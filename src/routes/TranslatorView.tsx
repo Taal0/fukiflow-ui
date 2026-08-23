@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, PanelLeft } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CircleHelp, PanelLeft } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import {
   useChapterPages,
@@ -14,6 +14,10 @@ import { PageCanvas } from '@/canvas/PageCanvas'
 import { ToolRail } from '@/components/canvas/ToolRail'
 import { ZoomControls } from '@/components/canvas/ZoomControls'
 import { ConflictDialog } from '@/components/ConflictDialog'
+import {
+  OnboardingGuide,
+  OnboardingTip,
+} from '@/components/OnboardingGuide'
 import { MobileWarning } from '@/components/MobileWarning'
 import { PageGallery } from '@/components/PageGallery'
 import { ShortcutsHelp } from '@/components/ShortcutsHelp'
@@ -88,6 +92,8 @@ export function TranslatorView() {
   const pagesMap = useSession((s) => s.pages)
   const deletePage = useDeletePageMutation()
   const [canvasReady, setCanvasReady] = useState(false)
+  const [guideOpen, setGuideOpen] = useState(false)
+  const dismissFirstRunStep = useSession((s) => s.dismissFirstRunStep)
 
   const isTablet = useMediaQuery('(max-width: 1023px)')
   const isDesktop = useMediaQuery('(min-width: 1024px)')
@@ -205,6 +211,11 @@ export function TranslatorView() {
   useEffect(() => {
     if (typesetError) toast(typesetError, 'danger', 5000)
   }, [typesetError])
+
+  const regionCount = pageSession?.edit.regions?.length ?? 0
+  useEffect(() => {
+    if (regionCount > 0) dismissFirstRunStep(3)
+  }, [regionCount, dismissFirstRunStep])
 
   useEffect(() => {
     if (verifyError) toast(verifyError, 'danger', 5000)
@@ -417,7 +428,9 @@ export function TranslatorView() {
   return (
     <>
       <MobileWarning />
+      <OnboardingGuide open={guideOpen} onOpenChange={setGuideOpen} />
       <WorkspaceShell
+        tip={<OnboardingTip step={3} />}
         toolbar={
           <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3">
             {isTablet && (
@@ -486,6 +499,16 @@ export function TranslatorView() {
 
             <div className="ml-auto flex items-center gap-2">
               <ViewToggle value={viewMode} onChange={setViewMode} />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Nasıl çalışır"
+                title="Nasıl çalışır"
+                onClick={() => setGuideOpen(true)}
+              >
+                <CircleHelp className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         }

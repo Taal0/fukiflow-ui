@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Plus, Sun, Moon, Monitor } from 'lucide-react'
+import { CircleHelp, Plus, Sun, Moon, Monitor } from 'lucide-react'
 import { BrandMark } from '@/components/BrandMark'
 import { RoleSwitch } from '@/components/RoleSwitch'
 import { Button } from '@/components/ui/button'
@@ -11,9 +11,10 @@ import {
 
 interface CatalogHeaderProps {
   onUpload: () => void
+  onOpenGuide?: () => void
 }
 
-export function CatalogHeader({ onUpload }: CatalogHeaderProps) {
+export function CatalogHeader({ onUpload, onOpenGuide }: CatalogHeaderProps) {
   const theme = useSession((s) => s.ui.theme)
   const setTheme = useSession((s) => s.setTheme)
   const workspaceRole = useSession((s) => s.ui.workspaceRole)
@@ -68,6 +69,18 @@ export function CatalogHeader({ onUpload }: CatalogHeaderProps) {
               },
             ]}
           />
+          {onOpenGuide && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Nasıl çalışır"
+              title="Nasıl çalışır"
+              onClick={onOpenGuide}
+            >
+              <CircleHelp className="h-4 w-4" />
+            </Button>
+          )}
           <Button type="button" size="sm" onClick={onUpload}>
             <Plus className="h-3.5 w-3.5" aria-hidden />
             Yükle

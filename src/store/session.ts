@@ -61,13 +61,16 @@ export interface PageSession {
   lastUndoCoalesce?: { key: string; at: number }
 }
 
+export type FirstRunStep = 1 | 2 | 3 | 4
+
 interface SessionState {
   selectedPageId: number | null
   chapterSlug: string | null
   viewMode: ViewMode
   splitRatio: number
   pages: Record<number, PageSession>
-  guideDismissed: boolean
+  /** Completed first-run tip steps (1 catalog · 2 upload · 3 translator · 4 letterer). */
+  firstRunDone: FirstRunStep[]
   /** Ephemeral brush tool (not persisted in PageEdit). */
   brush: BrushState
   /** Presentation prefs — survive resetAll. */
@@ -88,7 +91,7 @@ interface SessionState {
   setWorkspaceRole: (role: WorkspaceRole) => void
   setZoomPercent: (pct: number) => void
   requestZoom: (kind: 'fit' | '100' | 'set', scale?: number) => void
-  openGuide: () => void
+  dismissFirstRunStep: (step: FirstRunStep) => void
 
   /** Load server overlay into session (skips if dirty or incoming rev is stale). */
   hydrateEdit: (pageId: number, edit: PageEdit | null | undefined, rev?: number) => void
@@ -179,7 +182,6 @@ interface SessionState {
   resetPageLocal: (pageId: number) => void
   clearTypeset: (pageId: number) => void
   resetAll: () => void
-  dismissGuide: () => void
   pageSession: (pageId: number | null | undefined) => PageSession
 }
 
@@ -289,7 +291,8 @@ function withBubblePatch(
   return { ...edit, bubbles }
 }
 
-const GUIDE_KEY = 'fukiflow.guideDismissed'
+const FIRST_RUN_KEY = 'fukiflow.firstRun'
+const LEGACY_GUIDE_KEY = 'fukiflow.guideDismissed'
 const UI_KEY = 'fukiflow.ui'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -346,12 +349,38 @@ export const UI_DEFAULTS: UiPrefs = {
 export const GALLERY_WIDTH = { min: 160, max: 360, default: 208 }
 export const PANEL_WIDTH = { min: 300, max: 560, default: 352 }
 
-function readGuideDismissed(): boolean {
+function isFirstRunStep(n: unknown): n is FirstRunStep {
+  return n === 1 || n === 2 || n === 3 || n === 4
+}
+
+function readFirstRunDone(): FirstRunStep[] {
   try {
-    return localStorage.getItem(GUIDE_KEY) === '1'
+    const raw = localStorage.getItem(FIRST_RUN_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) return parsed.filter(isFirstRunStep)
+    }
+    // Old letterer-only strip — do not skip the new 4-step tour.
+    if (localStorage.getItem(LEGACY_GUIDE_KEY) === '1') return [4]
+    return []
   } catch {
-    return false
+    return []
   }
+}
+
+function persistFirstRunDone(done: FirstRunStep[]) {
+  try {
+    localStorage.setItem(FIRST_RUN_KEY, JSON.stringify(done))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function isFirstRunPending(
+  done: FirstRunStep[],
+  step: FirstRunStep,
+): boolean {
+  return !done.includes(step)
 }
 
 function readUiPrefs(): UiPrefs {
@@ -501,7 +530,7 @@ export const useSession = create<SessionState>((set, get) => ({
   viewMode: 'composed',
   splitRatio: 0.5,
   pages: {},
-  guideDismissed: readGuideDismissed(),
+  firstRunDone: readFirstRunDone(),
   brush: { ...DEFAULT_BRUSH },
   ui: readUiPrefs(),
 
@@ -623,13 +652,12 @@ export const useSession = create<SessionState>((set, get) => ({
       return { ui: { ...s.ui, zoomCmd } }
     }),
 
-  openGuide: () => {
-    try {
-      localStorage.removeItem(GUIDE_KEY)
-    } catch {
-      /* ignore */
-    }
-    set({ guideDismissed: false })
+  dismissFirstRunStep: (step) => {
+    const cur = get().firstRunDone
+    if (cur.includes(step)) return
+    const next = [...cur, step].sort((a, b) => a - b) as FirstRunStep[]
+    persistFirstRunDone(next)
+    set({ firstRunDone: next })
   },
 
   hydrateEdit: (pageId, edit, rev) => {
@@ -1497,15 +1525,6 @@ export const useSession = create<SessionState>((set, get) => ({
         galleryDrawerOpen: false,
       },
     })),
-
-  dismissGuide: () => {
-    try {
-      localStorage.setItem(GUIDE_KEY, '1')
-    } catch {
-      /* ignore */
-    }
-    set({ guideDismissed: true })
-  },
 
   pageSession: (pageId) => {
     if (pageId == null) return emptyPage()

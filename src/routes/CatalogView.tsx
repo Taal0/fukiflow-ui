@@ -4,6 +4,10 @@ import { Upload } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useChapters, useDeleteChapterMutation } from '@/api/queries'
 import type { Chapter } from '@/api/types'
+import {
+  OnboardingGuide,
+  OnboardingTip,
+} from '@/components/OnboardingGuide'
 import { CatalogHeader } from '@/components/catalog/CatalogHeader'
 import { ChapterGrid } from '@/components/catalog/ChapterGrid'
 import { DropZone } from '@/components/upload/DropZone'
@@ -27,12 +31,15 @@ export function CatalogView() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [initialFiles, setInitialFiles] = useState<File[] | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Chapter | null>(null)
+  const [guideOpen, setGuideOpen] = useState(false)
+  const dismissFirstRunStep = useSession((s) => s.dismissFirstRunStep)
 
   useEffect(() => {
     applyThemeAttribute(theme)
   }, [theme])
 
   const openUpload = (files?: File[]) => {
+    dismissFirstRunStep(1)
     setInitialFiles(files ?? null)
     setUploadOpen(true)
   }
@@ -56,7 +63,11 @@ export function CatalogView() {
 
   return (
     <div className="flex h-full flex-col bg-[var(--color-canvas)]">
-      <CatalogHeader onUpload={() => openUpload()} />
+      <CatalogHeader
+        onUpload={() => openUpload()}
+        onOpenGuide={() => setGuideOpen(true)}
+      />
+      <OnboardingTip step={1} />
 
       <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-4 py-6 sm:px-6">
         {loading && <CatalogSkeleton />}
@@ -127,6 +138,7 @@ export function CatalogView() {
         }}
       />
 
+      <OnboardingGuide open={guideOpen} onOpenChange={setGuideOpen} />
       <Toaster />
     </div>
   )
